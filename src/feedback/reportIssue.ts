@@ -16,44 +16,48 @@ function mergeFailureCount(): number {
   }
 }
 
-/** Builds the markdown body for a pre-filled GitHub issue — everything
+/** Builds the plain-text body for a pre-filled GitHub issue — everything
  *  useful for reproducing a bug that the reporter shouldn't have to type
- *  out by hand (browser, viewport, current city seed/params). Leaves the
- *  actual description blank for them to fill in. */
+ *  out by hand (browser, viewport, current city seed/params), formatted so
+ *  it reads cleanly in GitHub's raw "Write" textarea, not just the rendered
+ *  "Preview" — most reporters here won't be developers and won't know to
+ *  switch tabs to make sense of markdown syntax or HTML comments. No HTML
+ *  tags, no comment syntax, no code fences — just plain labeled lines. */
 function buildIssueBody(params: GenParams): string {
   const failureCount = mergeFailureCount()
   const lines = [
-    '**What happened?**',
+    'What happened?',
+    '(Describe the bug, and what you expected to happen instead.)',
     '',
-    '<!-- Describe the bug, and what you expected instead. -->',
     '',
-    '**Steps to reproduce**',
+    'Steps to reproduce',
+    '1. ',
+    '2. ',
+    '3. ',
     '',
-    '<!-- 1. ... 2. ... 3. ... -->',
     '',
-    '---',
-    '<details><summary>Environment (auto-filled)</summary>',
+    '----------------------------------------',
+    "Everything below this line is filled in automatically — please leave it as-is, it helps track down the bug.",
     '',
-    `- Browser: \`${navigator.userAgent}\``,
-    `- Viewport: ${window.innerWidth}×${window.innerHeight}`,
-    `- City seed: ${params.seed}`,
-    `- City name: ${params.cityName}`,
-    '- Generation params:',
-    '  ```json',
-    `  ${JSON.stringify(params)}`,
-    '  ```',
+    `City name: ${params.cityName}`,
+    `City seed: ${params.seed}`,
+    `Districts: ${params.districtCount}`,
+    `Gates: ${params.gateCount}`,
+    `Block size: ${params.blockSize}`,
+    `Lane width: ${params.laneWidth}`,
+    `Building spacing: ${params.buildingGap}`,
+    `Building density: ${params.buildingDensity}`,
+    `City wall: ${params.hasWall ? 'yes' : 'no'}`,
+    `River: ${params.hasRiver ? `yes (width ${params.riverWidth})` : 'no'}`,
+    `Coast: ${params.hasCoast ? `yes (${params.coastKind}, ${params.coastSide} side)` : 'no'}`,
+    `Browser: ${navigator.userAgent}`,
+    `Window size: ${window.innerWidth} x ${window.innerHeight}`,
     ...(failureCount > 0
-      ? [
-          '',
-          `- ⚠️ ${failureCount} merge failure(s) recorded this browser. Run \`downloadMergeFailureLog()\` in the` +
-            ' devtools console and attach the downloaded file — it has everything needed to reproduce them.',
-        ]
+      ? [`Note: ${failureCount} building-merge issue(s) were also recorded automatically on this device.`]
       : []),
-    '',
-    '</details>',
   ]
   const body = lines.join('\n')
-  return body.length > MAX_BODY_LENGTH ? body.slice(0, MAX_BODY_LENGTH) + '\n\n<!-- truncated -->' : body
+  return body.length > MAX_BODY_LENGTH ? body.slice(0, MAX_BODY_LENGTH) + '\n\n(truncated)' : body
 }
 
 /** Opens a new GitHub issue for this project in a new tab, pre-filled with
