@@ -1,4 +1,5 @@
 import { MAP_SVG_ID, EDITOR_OVERLAY_ID } from '../rendering/MapCanvas.tsx'
+import { saveBlob } from './filePicker.ts'
 
 const PARCHMENT = '#efe2c4'
 
@@ -57,12 +58,10 @@ export async function exportPng(opts: ExportOptions): Promise<void> {
   const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
   if (!blob) throw new Error('Failed to encode PNG')
 
-  const link = document.createElement('a')
-  const objectUrl = URL.createObjectURL(blob)
-  link.href = objectUrl
-  link.download = fileName
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
-  URL.revokeObjectURL(objectUrl)
+  await saveBlob(blob, {
+    suggestedName: fileName,
+    description: 'City map image',
+    mimeType: 'image/png',
+    extensions: ['.png'],
+  })
 }

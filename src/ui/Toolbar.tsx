@@ -3,6 +3,7 @@ import { useMapStore } from '../state/mapStore.ts'
 import { exportPng } from '../export/exportPng.ts'
 import { loadMapFromFile, saveMapToFile } from '../export/saveLoad.ts'
 import { estimatePopulation } from '../analysis/population.ts'
+import { openReportIssue } from '../feedback/reportIssue.ts'
 
 export function Toolbar() {
   const mode = useMapStore((s) => s.mode)
@@ -42,8 +43,13 @@ export function Toolbar() {
     }
   }
 
-  const handleSave = () => {
-    saveMapToFile(scene, `${cityName.replace(/\s+/g, '-').toLowerCase() || 'city'}.dndmap.json`)
+  const handleSave = async () => {
+    try {
+      await saveMapToFile(scene, `${cityName.replace(/\s+/g, '-').toLowerCase() || 'city'}.dndmap.json`)
+    } catch (err) {
+      console.error(err)
+      alert('Save failed: ' + (err as Error).message)
+    }
   }
 
   const handleLoadClick = () => {
@@ -135,6 +141,14 @@ export function Toolbar() {
 
       <button className="btn accent" onClick={handleExport} disabled={exporting}>
         {exporting ? 'Exporting…' : '⬇ Export PNG'}
+      </button>
+
+      <button
+        className="btn"
+        onClick={() => openReportIssue(scene.params)}
+        title="Report a bug on GitHub — opens a pre-filled issue with your browser and city info attached"
+      >
+        🐛 Report Issue
       </button>
     </div>
   )

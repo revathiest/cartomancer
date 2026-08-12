@@ -1,4 +1,5 @@
 import type { MapScene } from '../shared/types.ts'
+import { saveBlob } from './filePicker.ts'
 
 const SAVE_KIND = 'dnd-map-maker-save'
 const SAVE_VERSION = 1
@@ -10,19 +11,18 @@ type SaveFile = {
 }
 
 /** Serialize the current scene (everything needed to reproduce it exactly,
- *  including every hand edit — not just the generation params) and download
- *  it as a JSON file. */
-export function saveMapToFile(scene: MapScene, fileName: string): void {
+ *  including every hand edit — not just the generation params) and save it
+ *  as a JSON file — via a native directory-picking "Save As" dialog where
+ *  the browser supports it, otherwise a plain download. */
+export async function saveMapToFile(scene: MapScene, fileName: string): Promise<void> {
   const payload: SaveFile = { kind: SAVE_KIND, version: SAVE_VERSION, scene }
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = fileName
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
-  URL.revokeObjectURL(url)
+  await saveBlob(blob, {
+    suggestedName: fileName,
+    description: 'DnD map save',
+    mimeType: 'application/json',
+    extensions: ['.json'],
+  })
 }
 
 /** Parse a previously saved map file back into a scene. Throws with a
