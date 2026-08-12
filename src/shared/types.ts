@@ -313,6 +313,12 @@ export type MapScene = {
   roads: Road[]
   wall: Wall | null
   river: River | null
+  /** The last river's exact shape, kept when the river is toggled off so
+   *  toggling it back on restores the same river instead of generating a
+   *  new (and differently-placed) one. Absent on scenes saved before this
+   *  field existed, or after a full regenerate — toggling river on then
+   *  generates a fresh one, same as always. */
+  riverCache?: River | null
   /** Coastline + water, when the city is coastal. */
   coast: Coast | null
   buildings: Building[]
@@ -328,7 +334,9 @@ export type MapScene = {
 }
 
 export const DEFAULT_PARAMS: GenParams = {
-  seed: 1337,
+  // A fresh random seed each time the app loads, so every visit starts on a
+  // different city rather than always the same one.
+  seed: Math.floor(Math.random() * 1_000_000),
   districtCount: 12,
   gateCount: 4,
   blockSize: 2.6,

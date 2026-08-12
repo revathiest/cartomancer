@@ -336,9 +336,8 @@ type MapState = {
   /** Set the global building-density multiplier live (reflows buildings only —
    * doesn't touch districts/roads/wall). */
   setBuildingDensity: (v: number) => void
-  /** Search district count and building density (never crowding — that's a
-   * display-only multiplier, not a real change to the city) for the combination
-   * that lands closest to a target population, then regenerate with it. Returns
+  /** Search district count and building density for the combination that
+   * lands closest to a target population, then regenerate with it. Returns
    * what was actually achieved so the UI can report it. */
   matchPopulation: (target: number) => {
     achieved: number
@@ -402,12 +401,13 @@ type MapState = {
   /** When false, district background fills/hatching are hidden (transparent). */
   showDistrictFills: boolean
   setShowDistrictFills: (v: boolean) => void
+  /** When true, the Generate City button picks a new random seed first;
+   *  when false, it regenerates with whatever seed is currently entered. */
+  randomizeSeedOnGenerate: boolean
+  setRandomizeSeedOnGenerate: (v: boolean) => void
   /** Select-tool click filter — restricts what a click can grab. */
   selectFilter: SelectFilter
   setSelectFilter: (f: SelectFilter) => void
-  /** Global population-density knob for the population estimate (1 = normal). */
-  crowding: number
-  setCrowding: (v: number) => void
   moveRoadNode: (id: string, p: Point) => void
   addRoadNode: (p: Point, kind?: RoadNodeKind) => void
   setRoadNodeKind: (id: string, kind: RoadNodeKind) => void
@@ -579,10 +579,10 @@ export const useMapStore = create<MapState>((set, get) => {
     connectFrom: null,
     showDistrictFills: true,
     setShowDistrictFills: (showDistrictFills) => set({ showDistrictFills }),
+    randomizeSeedOnGenerate: false,
+    setRandomizeSeedOnGenerate: (randomizeSeedOnGenerate) => set({ randomizeSeedOnGenerate }),
     selectFilter: 'all',
     setSelectFilter: (selectFilter) => set({ selectFilter, selection: null }),
-    crowding: 1,
-    setCrowding: (crowding) => set({ crowding }),
 
     setParams: (partial) => set((s) => ({ params: { ...s.params, ...partial } })),
 
@@ -629,10 +629,22 @@ export const useMapStore = create<MapState>((set, get) => {
         const scene = cloneScene(state.scene)
         scene.params.hasRiver = on
         if (on) {
-          const center = { x: scene.bounds.width / 2, y: scene.bounds.height / 2 }
-          const rng = makeRng((scene.params.seed ^ 0x51e7) >>> 0)
-          scene.river = generateRiver(center, scene.footprintRadius, scene.bounds.width, scene.roads, rng, scene.params.riverWidth)
+          // Restore the exact river that was there before it was last turned
+          // off, rather than generating a new one — a fresh generateRiver
+          // call uses its own independent RNG draw, which (unlike the wall,
+          // whose shape is a pure function of the boundary) doesn't reproduce
+          // the river's original path.
+          if (scene.riverCache) {
+            scene.river = scene.riverCache
+            scene.river.bridges = computeBridges(scene.river.points, scene.roads, scene.river.width)
+            scene.riverCache = undefined
+          } else {
+            const center = { x: scene.bounds.width / 2, y: scene.bounds.height / 2 }
+            const rng = makeRng((scene.params.seed ^ 0x51e7) >>> 0)
+            scene.river = generateRiver(center, scene.footprintRadius, scene.bounds.width, scene.roads, rng, scene.params.riverWidth)
+          }
         } else {
+          scene.riverCache = scene.river
           scene.river = null
         }
         reflowBuildingsInScene(scene)
@@ -672,7 +684,6 @@ export const useMapStore = create<MapState>((set, get) => {
     matchPopulation: (target) => {
       const state = get()
       const baseParams = state.params
-      const crowding = state.crowding
       const MIN_COUNT = 5
       const MAX_COUNT = 28
       const MIN_DENSITY = 0.5
@@ -685,7 +696,7 @@ export const useMapStore = create<MapState>((set, get) => {
         const cached = tried.get(key)
         if (cached) return cached
         const scene = generateCity({ ...baseParams, districtCount, buildingDensity })
-        const pop = estimatePopulation(scene, crowding).total
+        const pop = estimatePopulation(scene).total
         const c = { districtCount, buildingDensity, pop, scene }
         tried.set(key, c)
         return c

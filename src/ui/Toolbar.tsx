@@ -20,8 +20,7 @@ export function Toolbar() {
   const scene = useMapStore((s) => s.scene)
   const hasManualEdits = useMapStore((s) => s.hasManualEdits)
   const loadScene = useMapStore((s) => s.loadScene)
-  const crowding = useMapStore((s) => s.crowding)
-  const population = useMemo(() => estimatePopulation(scene, crowding), [scene, crowding])
+  const population = useMemo(() => estimatePopulation(scene), [scene])
 
   const [exporting, setExporting] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)

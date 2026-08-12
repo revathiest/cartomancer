@@ -13,12 +13,15 @@ export function ParamPanel() {
   const setBuildingDensity = useMapStore((s) => s.setBuildingDensity)
   const snapshot = useMapStore((s) => s.snapshot)
   const hasManualEdits = useMapStore((s) => s.hasManualEdits)
+  const randomizeSeedOnGenerate = useMapStore((s) => s.randomizeSeedOnGenerate)
+  const setRandomizeSeedOnGenerate = useMapStore((s) => s.setRandomizeSeedOnGenerate)
 
-  const handleRegenerate = () => {
+  const handleGenerate = () => {
     if (hasManualEdits) {
       const ok = confirm('Regenerating will discard your manual edits. Continue?')
       if (!ok) return
     }
+    if (randomizeSeedOnGenerate) randomizeSeed()
     regenerate()
   }
 
@@ -42,13 +45,29 @@ export function ParamPanel() {
             className="input"
             type="number"
             value={params.seed}
+            disabled={randomizeSeedOnGenerate}
             onChange={(e) => setParams({ seed: Number(e.target.value) || 0 })}
           />
-          <button className="btn" onClick={randomizeSeed} title="Random seed">
+          <button className="btn" onClick={randomizeSeed} disabled={randomizeSeedOnGenerate} title="Random seed">
             🎲
           </button>
         </div>
       </label>
+
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={randomizeSeedOnGenerate}
+          onChange={(e) => setRandomizeSeedOnGenerate(e.target.checked)}
+        />
+        <span>Randomize seed on generate</span>
+      </label>
+
+      <button className="btn accent full" onClick={handleGenerate}>
+        ⟳ Generate City
+      </button>
+
+      {hasManualEdits && <p className="hint warn">You have manual edits. Generating discards them.</p>}
 
       <label className="field">
         <span>Districts: {params.districtCount}</span>
@@ -179,12 +198,6 @@ export function ParamPanel() {
           <p className="hint">Coast changes apply on Regenerate.</p>
         </>
       )}
-
-      <button className="btn accent full" onClick={handleRegenerate}>
-        ⟳ Regenerate
-      </button>
-
-      {hasManualEdits && <p className="hint warn">You have manual edits. Regenerating discards them.</p>}
 
       <p className="hint">
         Switch to <b>Edit</b> mode to drag roads, districts, the wall and river, and to place named buildings.

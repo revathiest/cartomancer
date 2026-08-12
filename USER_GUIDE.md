@@ -27,7 +27,7 @@ you want to know exactly what a specific control does.
 ## Quick start
 
 1. In **Generate** mode, set a city name and seed, adjust the sliders to taste, and click
-   **⟳ Regenerate**.
+   **⟳ Generate City**.
 2. Switch to **Edit** mode to hand-tune anything: drag districts and roads, place named
    buildings, merge adjoining buildings into one, rename things.
 3. Click **⬇ Export PNG** to save a full-resolution image of the map, or **💾 Save** to save
@@ -69,7 +69,9 @@ Generate mode has two sections in the sidebar: **City & Layout** settings, and a
 | Control | Range | Default | What it does |
 |---|---|---|---|
 | **City name** | text | — | Just a label — used in the map's title banner and in Save/Export file names. |
-| **Seed** | any whole number | — | The single number that determines the entire city layout. Same seed + same settings = same city, always. Type a specific number, or click the 🎲 button for a random one. |
+| **Seed** | any whole number | — | The single number that determines the entire city layout. Same seed + same settings = same city, always. Type a specific number, or click the 🎲 button next to it for a random one. Disabled while "Randomize seed on generate" (below) is checked. |
+| **Randomize seed on generate** | on/off | off | When checked, clicking **⟳ Generate City** picks a new random seed first, then rebuilds. When unchecked, it rebuilds using whatever seed is currently entered. |
+| **⟳ Generate City** | button | — | Rebuilds the entire city from scratch using the current settings (and either the entered seed or a fresh random one, per the toggle above). If you've made hand edits in Edit mode, this discards them (you'll be asked to confirm first). |
 | **Districts** | 5 – 28 | 12 | How many districts (neighborhoods) the city is divided into. |
 
 **Building layout (all districts)**
@@ -90,10 +92,9 @@ priority over the citywide one here.
 | **Coast (open water)** | on/off | off | Adds a coastline (open sea or a bay) along one edge of the map, with waterfront districts (docks, shipyards, etc.) gravitating toward it. |
 | **Water** | Open sea / Bay | Open sea | Only shown when Coast is on. Open sea is a straight shoreline; Bay curves inland. |
 | **Side** | N / E / S / W | W | Only shown when Coast is on. Which edge of the map the coastline sits on. |
-| **⟳ Regenerate** | button | — | Rebuilds the entire city from scratch using the current settings and seed. If you've made hand edits in Edit mode, this discards them (you'll be asked to confirm first). |
 
 > **Note:** Wall and River toggles take effect immediately. Coast changes only apply the
-> next time you click Regenerate.
+> next time you click Generate City.
 
 ### Population
 
@@ -103,12 +104,10 @@ Shown below City & Layout, always visible in Generate mode.
 |---|---|---|---|
 | **Population total** | read-only | — | An estimate based on building count, size, use, and district type, with an average number of residents assumed per inhabited building. It's flavor, not a strict simulation. |
 | **Target population** + **Match** | any number | — | Type a population you want the city to have, then click **Match**. The app searches different combinations of district count and building density to find the closest match, then regenerates the city with that combination. This discards hand edits (with a confirmation first). If it can't get exactly to your target, it tells you what it found and why (e.g. it hit the maximum district count). |
-| **Crowding** | 0.5× – 2× | 1× | A pure population-estimate multiplier — it does **not** change the map or add/remove any buildings, only the number shown for population. Use it to represent a city that's more/less densely inhabited than its building count alone would suggest. |
-| **Population by district type** | read-only table | — | Breaks the population estimate down by district type, showing building count and estimated people for each. |
 
-**General rule of thumb:** population goes up by adding more districts, raising a
-district's density, or raising crowding. Slum districts pack in the most people per
-building; noble and civic districts the fewest.
+**General rule of thumb:** population goes up by adding more districts or raising a
+district's density. Slum districts pack in the most people per building; noble and civic
+districts the fewest.
 
 ---
 

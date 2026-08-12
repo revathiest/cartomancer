@@ -4,12 +4,10 @@ import { estimatePopulation } from '../analysis/population.ts'
 
 export function PopulationPanel() {
   const scene = useMapStore((s) => s.scene)
-  const crowding = useMapStore((s) => s.crowding)
-  const setCrowding = useMapStore((s) => s.setCrowding)
   const matchPopulation = useMapStore((s) => s.matchPopulation)
   const hasManualEdits = useMapStore((s) => s.hasManualEdits)
 
-  const est = useMemo(() => estimatePopulation(scene, crowding), [scene, crowding])
+  const est = useMemo(() => estimatePopulation(scene), [scene])
   const [target, setTarget] = useState('')
   const [matchNote, setMatchNote] = useState<string | null>(null)
   const [matching, setMatching] = useState(false)
@@ -75,46 +73,13 @@ export function PopulationPanel() {
       </label>
       {matchNote && <p className="hint">{matchNote}</p>}
       <p className="hint">
-        Adjusts district count and building density (never crowding) and regenerates the city to
-        land close to your target.
+        Adjusts district count and building density and regenerates the city to land close to
+        your target.
       </p>
 
-      <label className="field">
-        <span>Crowding: {crowding.toFixed(2)}×</span>
-        <input
-          type="range"
-          min={0.5}
-          max={2}
-          step={0.05}
-          value={crowding}
-          onChange={(e) => setCrowding(Number(e.target.value))}
-        />
-      </label>
-
-      {est.byDistrictType.length > 0 && (
-        <table className="pop-table">
-          <thead>
-            <tr>
-              <th>District type</th>
-              <th>Bldgs</th>
-              <th>People</th>
-            </tr>
-          </thead>
-          <tbody>
-            {est.byDistrictType.map((r) => (
-              <tr key={r.type}>
-                <td>{r.type}</td>
-                <td>{r.buildings}</td>
-                <td>{r.population.toLocaleString()}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-
       <p className="hint">
-        Raise it by adding districts, increasing a district’s <b>density</b>, or nudging
-        <b> crowding</b>. Slums pack in the most people; noble and civic quarters the fewest.
+        Raise it by adding districts or increasing a district’s <b>density</b>. Slums pack in the
+        most people; noble and civic quarters the fewest.
       </p>
     </>
   )

@@ -10,8 +10,7 @@ import type {
  * Population estimation from the map itself: every building contributes
  * residents based on its footprint (size), its use (type), and the character of
  * the district it sits in (how tall the buildings run and how densely people
- * live there). A single global `crowding` knob lets the GM slide the whole city
- * between sparse and packed without regenerating anything.
+ * live there).
  *
  * The map is stylised (buildings are drawn larger than true scale for
  * legibility), so the constants below are calibrated to land a typical generated
@@ -95,7 +94,7 @@ const SHAPE_AREA: Record<BuildingShape, number> = {
 }
 
 /**
- * Living space (in map units²) that one resident occupies at crowding 1.0.
+ * Living space (in map units²) that one resident occupies.
  * Calibrated so a default residential quarter houses a believable number of
  * people (a ~30×24 two-storey house ≈ 12 residents).
  */
@@ -104,30 +103,23 @@ const FLOOR_UNITS_PER_PERSON = 120
 /** Landmarks are civic/monumental — never counted as dense housing. */
 const LANDMARK_RESIDENTIAL_CAP = 0.15
 
-export type DistrictTypeBreakdown = {
-  type: DistrictType
-  buildings: number
-  population: number
-}
-
 export type PopulationEstimate = {
   total: number
   buildingCount: number
   /** Residents-per-building, averaged over buildings that house anyone. */
   averagePerBuilding: number
-  byDistrictType: DistrictTypeBreakdown[]
   /** A rough settlement-size label for the total. */
   classification: string
 }
 
 /** Residents contributed by one building given its district's character. */
-function buildingResidents(b: Building, districtType: DistrictType, crowding: number): number {
+function buildingResidents(b: Building, districtType: DistrictType): number {
   const shapeArea = SHAPE_AREA[b.shape ?? 'rect'] ?? 1
   const footprint = Math.max(0, b.w) * Math.max(0, b.h) * shapeArea
   const floorArea = footprint * STORIES[districtType]
   let resFraction = RESIDENTIAL_FRACTION[b.businessType ?? 'generic']
   if (b.isLandmark) resFraction = Math.min(resFraction, LANDMARK_RESIDENTIAL_CAP)
-  return (floorArea * resFraction * CROWDING[districtType] * crowding) / FLOOR_UNITS_PER_PERSON
+  return (floorArea * resFraction * CROWDING[districtType]) / FLOOR_UNITS_PER_PERSON
 }
 
 /** D&D-flavoured settlement-size bands for a resident count. */
@@ -142,15 +134,11 @@ export function classifySettlement(total: number): string {
   return 'Metropolis'
 }
 
-/**
- * Estimate the resident population of the current scene. `crowding` (default 1)
- * scales the whole city between sparse (~0.5) and packed (~2).
- */
-export function estimatePopulation(scene: MapScene, crowding = 1): PopulationEstimate {
+/** Estimate the resident population of the current scene. */
+export function estimatePopulation(scene: MapScene): PopulationEstimate {
   const typeById = new Map<string, DistrictType>()
   for (const d of scene.districts) typeById.set(d.id, d.type)
 
-  const perType = new Map<DistrictType, { buildings: number; population: number }>()
   let total = 0
   let housing = 0
 
@@ -158,25 +146,16 @@ export function estimatePopulation(scene: MapScene, crowding = 1): PopulationEst
     // Fall back to a plain residential character for buildings placed outside
     // any district (rare — hand-placed on open parchment).
     const dt = (b.districtId && typeById.get(b.districtId)) || 'residential'
-    const residents = buildingResidents(b, dt, crowding)
+    const residents = buildingResidents(b, dt)
     total += residents
     if (residents > 0.5) housing++
-    const bucket = perType.get(dt) ?? { buildings: 0, population: 0 }
-    bucket.buildings++
-    bucket.population += residents
-    perType.set(dt, bucket)
   }
-
-  const byDistrictType: DistrictTypeBreakdown[] = [...perType.entries()]
-    .map(([type, v]) => ({ type, buildings: v.buildings, population: Math.round(v.population) }))
-    .sort((a, b) => b.population - a.population)
 
   const roundedTotal = Math.round(total)
   return {
     total: roundedTotal,
     buildingCount: scene.buildings.length,
     averagePerBuilding: housing > 0 ? total / housing : 0,
-    byDistrictType,
     classification: classifySettlement(roundedTotal),
   }
 }
