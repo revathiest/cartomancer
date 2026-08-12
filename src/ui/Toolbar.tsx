@@ -66,7 +66,7 @@ export function Toolbar() {
 
   return (
     <div className="toolbar">
-      <div className="toolbar-title">⚔ {cityName}</div>
+      <div className="toolbar-title">⚔ Cartomancer</div>
 
       <div className="seg">
         <button className={mode === 'generate' ? 'seg-btn active' : 'seg-btn'} onClick={() => setMode('generate')}>
