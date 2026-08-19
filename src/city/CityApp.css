@@ -1,0 +1,105 @@
+/* City-specific styling — generic app-shell/panel/button styles live in
+   src/shared/layout.css. */
+
+/* ---- Districts list ---- */
+.dist-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dist-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  background: var(--panel-bg-alt);
+  cursor: pointer;
+}
+
+.dist-row.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+
+.dist-swatch {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  border: 1.5px solid;
+  margin-top: 6px;
+}
+
+.dist-fields {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.mini-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--panel-text-dim);
+}
+
+.mini-field input[type='range'] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.dist-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  margin-top: 4px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--panel-bg-alt);
+}
+
+.dist-row .input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* ---- Population ---- */
+.pop-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--panel-bg-alt);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+
+.pop-total {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.pop-num {
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.pop-class {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--panel-text-dim);
+}

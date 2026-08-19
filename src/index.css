@@ -1,3 +1,5 @@
+@import './shared/layout.css';
+
 :root {
   --panel-bg: #2c2622;
   --panel-bg-alt: #37302a;

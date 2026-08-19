@@ -5,7 +5,7 @@ import { loadMapFromFile, saveMapToFile } from '../export/saveLoad.ts'
 import { estimatePopulation } from '../analysis/population.ts'
 import { openReportIssue } from '../feedback/reportIssue.ts'
 
-export function Toolbar() {
+export function Toolbar({ onHome }: { onHome: () => void }) {
   const mode = useMapStore((s) => s.mode)
   const setMode = useMapStore((s) => s.setMode)
   const tool = useMapStore((s) => s.tool)
@@ -71,7 +71,10 @@ export function Toolbar() {
 
   return (
     <div className="toolbar">
-      <div className="toolbar-title">⚔ Cartomancer</div>
+      <button className="btn" onClick={onHome} title="Back to map type selection">
+        🏠 Menu
+      </button>
+      <div className="toolbar-title">⚔ Cartomancer — City</div>
 
       <div className="seg">
         <button className={mode === 'generate' ? 'seg-btn active' : 'seg-btn'} onClick={() => setMode('generate')}>
