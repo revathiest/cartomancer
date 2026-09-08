@@ -8,6 +8,14 @@ type ExportOptions = {
   fileName?: string
   width: number
   height: number
+  /** DOM id of the source `<svg>` to export — defaults to the city map's,
+   *  so existing callers don't need to change. Pass a different id (e.g.
+   *  the dungeon canvas's) to export a different live SVG. */
+  svgId?: string
+  /** DOM id of an editor-overlay child (drag handles, selection outlines)
+   *  to strip before rasterizing, if present. Defaults to the city
+   *  editor's overlay id. */
+  overlayId?: string
 }
 
 /**
@@ -17,12 +25,12 @@ type ExportOptions = {
  * whole map regardless of current on-screen zoom/pan.
  */
 export async function exportPng(opts: ExportOptions): Promise<void> {
-  const { width, height, size = 3000, fileName = 'city-map.png' } = opts
-  const source = document.getElementById(MAP_SVG_ID) as SVGSVGElement | null
+  const { width, height, size = 3000, fileName = 'city-map.png', svgId = MAP_SVG_ID, overlayId = EDITOR_OVERLAY_ID } = opts
+  const source = document.getElementById(svgId) as SVGSVGElement | null
   if (!source) throw new Error('Map SVG not found')
 
   const clone = source.cloneNode(true) as SVGSVGElement
-  clone.querySelector(`#${EDITOR_OVERLAY_ID}`)?.remove()
+  clone.querySelector(`#${overlayId}`)?.remove()
 
   // Normalise to full-bounds framing at the requested pixel size.
   clone.setAttribute('viewBox', `0 0 ${width} ${height}`)

@@ -1,40 +1,21 @@
-import type { DungeonParams, DungeonScene, Room, Corridor, Door, SecurityKind, Stair } from './types.ts'
+import type { DungeonParams, DungeonScene, Room, Corridor, Door, Connection, Stair } from './types.ts'
 import { makeRng, type Rng } from '../generation/rng.ts'
 import { generateRoomEncounter, generateBossEncounter } from './encounters.ts'
 import { LEGEND_WIDTH, LEGEND_HEIGHT, LEGEND_MARGIN } from './legendLayout.ts'
+import {
+  buildOwnerGrid,
+  markReserved,
+  connectEndpoints,
+  roomCenter,
+  rollDoorFlags,
+  CELL_SIZE,
+  type OwnerGrid,
+} from './pathing.ts'
 
-/** World units per grid cell — keeps dungeon scale in the same ballpark as city maps. */
-export const CELL_SIZE = 20
-
-type DoorFlags = Pick<Door, 'open' | 'secret' | 'stuck' | 'locked' | 'trapped'>
-
-const LOCK_WEIGHTS: readonly [SecurityKind, number][] = [
-  ['none', 70],
-  ['mundane', 22],
-  ['magical', 8],
-]
-const TRAP_WEIGHTS: readonly [SecurityKind, number][] = [
-  ['none', 85],
-  ['mundane', 10],
-  ['magical', 5],
-]
-
-/** Rolls every door flag independently, EXCEPT `open` — an open door has
- *  demonstrably no lock, trap, or stuck mechanism, so those force off. */
-function rollDoorFlags(rng: Rng): DoorFlags {
-  const open = rng.next() < 0.15
-  // A door is open XOR secret — an open door is demonstrably not hidden,
-  // and a secret door is by definition closed (that's what makes it findable
-  // as a discovery rather than just an open passage).
-  if (open) return { open: true, secret: false, stuck: false, locked: 'none', trapped: 'none' }
-  return {
-    open: false,
-    secret: rng.next() < 0.06,
-    stuck: rng.next() < 0.1,
-    locked: rng.weighted(LOCK_WEIGHTS),
-    trapped: rng.weighted(TRAP_WEIGHTS),
-  }
-}
+// Re-exported for existing callers (e.g. DungeonCanvas.tsx) — the
+// definition lives in pathing.ts since grid/world conversion is needed by
+// manual edit-mode connection ops too, not just generation.
+export { CELL_SIZE }
 
 type BspNode = {
   x: number
@@ -137,10 +118,6 @@ function roomsInSubtree(node: BspNode, out: Room[]): Room[] {
   return out
 }
 
-function roomCenter(r: Room): { x: number; y: number } {
-  return { x: r.x + r.w / 2, y: r.y + r.h / 2 }
-}
-
 /** Finds the closest pair of rooms between two lists (by center distance), so
  *  corridors connecting sibling subtrees stay as short — and therefore as
  *  unlikely to wander through unrelated rooms — as possible. */
@@ -161,223 +138,12 @@ function closestPair(a: Room[], b: Room[]): [Room, Room] {
   return best
 }
 
-// ---------------------------------------------------------------------------
-// Grid-based corridor routing. Rooms are rasterized into an owner grid, and
-// every corridor is pathed through cells that belong to no OTHER room — so a
-// corridor can only ever meet a room at the two ends it's actually connecting,
-// never cut across a third room's floor.
-// ---------------------------------------------------------------------------
-
-type OwnerGrid = { data: Int32Array; w: number; h: number }
-
-function buildOwnerGrid(rooms: Room[], w: number, h: number): OwnerGrid {
-  const data = new Int32Array(w * h).fill(-1)
-  rooms.forEach((room, index) => {
-    for (let y = room.y; y < room.y + room.h; y++) {
-      for (let x = room.x; x < room.x + room.w; x++) {
-        if (x >= 0 && y >= 0 && x < w && y < h) data[y * w + x] = index
-      }
-    }
-  })
-  return { data, w, h }
-}
-
-function ownerAt(grid: OwnerGrid, x: number, y: number): number {
-  if (x < 0 || y < 0 || x >= grid.w || y >= grid.h) return -2 // out of bounds — never passable
-  return grid.data[y * grid.w + x]
-}
-
-type Cell = { x: number; y: number }
-
-/** BFS through cells that are either unclaimed floor or belong to `fromIdx`/
- *  `toIdx` themselves, so the path may start and end inside those two rooms
- *  but can never enter any other room's footprint. */
-function findPath(grid: OwnerGrid, from: Room, to: Room, fromIdx: number, toIdx: number, allowOccupied: boolean): Cell[] | null {
-  const start: Cell = { x: Math.floor(from.x + from.w / 2), y: Math.floor(from.y + from.h / 2) }
-  const goal: Cell = { x: Math.floor(to.x + to.w / 2), y: Math.floor(to.y + to.h / 2) }
-
-  const passable = (x: number, y: number) => {
-    const owner = ownerAt(grid, x, y)
-    if (owner === -1 || owner === fromIdx || owner === toIdx) return true
-    return allowOccupied && owner === -4 // cells within a buffer of an EARLIER corridor
-  }
-
-  const key = (x: number, y: number) => y * grid.w + x
-  const visited = new Set<number>([key(start.x, start.y)])
-  const cameFrom = new Map<number, Cell>()
-  const queue: Cell[] = [start]
-  let head = 0
-
-  while (head < queue.length) {
-    const cur = queue[head++]
-    if (cur.x === goal.x && cur.y === goal.y) {
-      const path: Cell[] = [cur]
-      let k = key(cur.x, cur.y)
-      while (cameFrom.has(k)) {
-        const p = cameFrom.get(k)!
-        path.push(p)
-        k = key(p.x, p.y)
-      }
-      return path.reverse()
-    }
-    const neighbors: Cell[] = [
-      { x: cur.x + 1, y: cur.y },
-      { x: cur.x - 1, y: cur.y },
-      { x: cur.x, y: cur.y + 1 },
-      { x: cur.x, y: cur.y - 1 },
-    ]
-    for (const n of neighbors) {
-      const k = key(n.x, n.y)
-      if (visited.has(k)) continue
-      if (!passable(n.x, n.y)) continue
-      visited.add(k)
-      cameFrom.set(k, cur)
-      queue.push(n)
-    }
-  }
-  return null
-}
-
-/** Widens a centerline path into a `width`-cell-thick ribbon, clamping the
- *  perpendicular extent at every step so it never spills onto a foreign
- *  room's floor. Only free (unclaimed) cells are kept — the portions of the
- *  path still inside the two connected rooms are already covered by the room
- *  rectangles themselves. `allowOccupied` must match whatever `findPath` used
- *  to find this path — if the path was allowed to cross another corridor's
- *  claimed territory (the rare fallback case), the render has to be allowed
- *  to draw floor there too, or the two disagree: the path connects the rooms
- *  but the rendered corridor has a hole in it, leaving a disconnected,
- *  doorless fragment sitting next to it. */
-function widenPath(path: Cell[], grid: OwnerGrid, width: number, fromIdx: number, toIdx: number, allowOccupied: boolean): Set<string> {
-  const cells = new Set<string>()
-  const lo = -Math.floor((width - 1) / 2)
-  const hi = Math.ceil((width - 1) / 2)
-
-  for (let i = 0; i < path.length; i++) {
-    const cur = path[i]
-    const next = path[i + 1] ?? path[i - 1] ?? cur
-    const horizontalMove = next.y === cur.y
-    // Thickness runs perpendicular to the direction of travel.
-    const perp = horizontalMove ? { x: 0, y: 1 } : { x: 1, y: 0 }
-
-    for (let k = lo; k <= hi; k++) {
-      const px = cur.x + perp.x * k
-      const py = cur.y + perp.y * k
-      const owner = ownerAt(grid, px, py)
-      const occupied = allowOccupied && owner === -4
-      if (owner !== -1 && owner !== fromIdx && owner !== toIdx && !occupied) continue // would spill onto a foreign room
-      if (owner === -1 || occupied) cells.add(`${px},${py}`)
-    }
-  }
-  return cells
-}
-
-/** Merges a set of grid cells into axis-aligned rectangles: first into
- *  per-row runs, then stitches consecutive rows sharing the same run back
- *  together into one tall rectangle. Without this second pass a straight
- *  corridor comes out as a stack of 1-cell-tall strips, and the hand-drawn
- *  "rough" filter (which warps each shape relative to its OWN bounding box)
- *  turns that into a rung-ladder mess instead of one continuous hallway. */
-function cellsToRects(cells: Set<string>): { x: number; y: number; w: number; h: number }[] {
-  const byRow = new Map<number, number[]>()
-  for (const key of cells) {
-    const [x, y] = key.split(',').map(Number)
-    if (!byRow.has(y)) byRow.set(y, [])
-    byRow.get(y)!.push(x)
-  }
-
-  const rowRuns: { x: number; y: number; w: number }[] = []
-  for (const [y, xs] of byRow) {
-    xs.sort((a, b) => a - b)
-    let runStart = xs[0]
-    let prev = xs[0]
-    for (let i = 1; i <= xs.length; i++) {
-      const x = xs[i]
-      if (x === prev + 1) {
-        prev = x
-        continue
-      }
-      rowRuns.push({ x: runStart, y, w: prev - runStart + 1 })
-      if (i < xs.length) {
-        runStart = x
-        prev = x
-      }
-    }
-  }
-
-  const byRunShape = new Map<string, number[]>()
-  for (const run of rowRuns) {
-    const key = `${run.x},${run.w}`
-    if (!byRunShape.has(key)) byRunShape.set(key, [])
-    byRunShape.get(key)!.push(run.y)
-  }
-
-  const rects: { x: number; y: number; w: number; h: number }[] = []
-  for (const [key, ys] of byRunShape) {
-    const [x, w] = key.split(',').map(Number)
-    ys.sort((a, b) => a - b)
-    let start = ys[0]
-    let prev = ys[0]
-    for (let i = 1; i <= ys.length; i++) {
-      const y = ys[i]
-      if (y === prev + 1) {
-        prev = y
-        continue
-      }
-      rects.push({ x, y: start, w, h: prev - start + 1 })
-      if (i < ys.length) {
-        start = y
-        prev = y
-      }
-    }
-  }
-  return rects
-}
-
-/** Connects two rooms with a collision-avoiding corridor, appending its
- *  geometry (as merged rectangles) and doorways to the output arrays. Returns
- *  true if a connection was actually made, so callers can record the edge in
- *  the room-adjacency graph (used to find the entrance/boss rooms). */
-/** Marks every cell of a just-drawn corridor — plus a 1-cell buffer around
- *  it — as occupied, so a LATER connect() call's pathfinding can't route
- *  through or immediately alongside it. Without this, two separate
- *  connections (e.g. a tree edge and a loop shortcut) can end up touching,
- *  which the corridor-union rendering then fuses into one blob — making it
- *  look like a room has two doors into "the same hallway" when they're
- *  really two distinct connections. Only free (-1) cells are claimed; room
- *  interiors are never touched. */
-function markCorridorOccupied(grid: OwnerGrid, cells: Set<string>): void {
-  for (const key of cells) {
-    const [cx, cy] = key.split(',').map(Number)
-    for (let dy = -1; dy <= 1; dy++) {
-      for (let dx = -1; dx <= 1; dx++) {
-        const x = cx + dx
-        const y = cy + dy
-        if (x < 0 || y < 0 || x >= grid.w || y >= grid.h) continue
-        if (grid.data[y * grid.w + x] === -1) grid.data[y * grid.w + x] = -4
-      }
-    }
-  }
-}
-
-type ConnectOptions = {
-  /** Tree edges (required for connectivity) skip the buffer entirely and
-   *  always take the direct route — a required connection shouldn't be
-   *  distorted, or worse, forced into a long wraparound detour, just to
-   *  avoid touching another corridor. Loop edges (optional) respect it, so
-   *  they don't fuse with an existing corridor and create a duplicate door
-   *  into "the same hallway". */
-  respectBuffer: boolean
-  /** If the routed path ends up more than this many times the straight-line
-   *  cell distance between the two rooms, the connection is discarded
-   *  entirely (nothing drawn, edge not recorded) rather than drawing a
-   *  hallway that wraps halfway around the map to avoid other corridors.
-   *  Only meaningful for optional (loop) connections — a required tree edge
-   *  has no length cap, since dropping it could disconnect a subtree. */
-  maxPathLength?: number
-}
-
-function connect(
+/** Runs `connectEndpoints` between two rooms and, on success, appends its
+ *  corridors/doors/connection record to the output arrays — the one place
+ *  both `connectTree` and `addLoops` fold a raw path result into scene data.
+ *  Returns whether a connection was actually made, so callers can record the
+ *  edge in the room-adjacency graph (used to find the entrance/boss rooms). */
+function connectRooms(
   a: Room,
   b: Room,
   aIdx: number,
@@ -387,51 +153,33 @@ function connect(
   rng: Rng,
   corridors: Corridor[],
   doors: Door[],
-  options: ConnectOptions,
+  connections: Connection[],
+  options: { respectBuffer: boolean; maxPathLength?: number },
 ): boolean {
-  // Prefer a route that keeps clear of earlier corridors entirely; only if
-  // that's truly impossible, fall back to one that may touch them — full
-  // connectivity matters more than the rare cosmetic exception. Whichever
-  // pass actually succeeds, `widenPath` MUST be told which — otherwise the
-  // path can legally cross another corridor's territory while the render
-  // refuses to draw floor there, leaving a disconnected, doorless fragment.
-  let usedFallback = !options.respectBuffer
-  let path = options.respectBuffer ? findPath(grid, a, b, aIdx, bIdx, false) : null
-  if (!path) {
-    path = findPath(grid, a, b, aIdx, bIdx, true)
-    usedFallback = true
-  }
-  if (!path) return false // disconnected footprint (shouldn't happen with a fully-partitioned BSP tree)
-  if (options.maxPathLength !== undefined && path.length > options.maxPathLength) return false
-
-  const cells = widenPath(path, grid, width, aIdx, bIdx, usedFallback)
-  for (const rect of cellsToRects(cells)) {
-    corridors.push({ id: nextId('corridor'), x: rect.x, y: rect.y, w: rect.w, h: rect.h, level: 0 }) // overwritten per-level below
-  }
-  markCorridorOccupied(grid, cells)
-
-  // A door belongs on the WALL — the boundary between a room cell and the
-  // first cell that isn't part of that room — not out in the corridor. Walk
-  // the centerline and drop one at every point ROOM MEMBERSHIP changes
-  // (room→free, free→room, or a direct room→room hop when two rooms touch
-  // with no corridor cells between them at all), positioned at the midpoint
-  // between the two cells so it lands exactly on their shared edge. Free and
-  // occupied (-4, another corridor's claimed territory the fallback path
-  // was allowed to cross) both count as "no room" here — a free→occupied
-  // hop is just corridor floor meeting more corridor floor, not a wall.
-  const roomOf = (owner: number) => (owner === aIdx || owner === bIdx ? owner : null)
-  for (let i = 1; i < path.length; i++) {
-    const prev = path[i - 1]
-    const cur = path[i]
-    if (roomOf(ownerAt(grid, prev.x, prev.y)) === roomOf(ownerAt(grid, cur.x, cur.y))) continue
-    doors.push({
-      id: nextId('door'),
-      pos: { x: (prev.x + cur.x) / 2, y: (prev.y + cur.y) / 2 },
-      orientation: prev.y === cur.y ? 'vertical' : 'horizontal',
-      level: 0, // overwritten per-level in generateDungeon
-      ...rollDoorFlags(rng),
-    })
-  }
+  const result = connectEndpoints(
+    { kind: 'room', room: a, idx: aIdx },
+    { kind: 'room', room: b, idx: bIdx },
+    grid,
+    width,
+    'random',
+    rng,
+    options,
+    nextId,
+  )
+  if (!result.success) return false
+  const connectionId = nextId('connection')
+  for (const c of result.corridors) c.connectionId = connectionId
+  corridors.push(...result.corridors)
+  doors.push(...result.doors)
+  connections.push({
+    id: connectionId,
+    level: 0, // overwritten per-level in generateDungeon
+    a: { kind: 'room', id: a.id },
+    b: { kind: 'room', id: b.id },
+    corridorIds: result.corridors.map((c) => c.id),
+    doorAId: result.doorAId,
+    doorBId: result.doorBId,
+  })
   return true
 }
 
@@ -449,18 +197,21 @@ function connectTree(
   rng: Rng,
   corridors: Corridor[],
   doors: Door[],
+  connections: Connection[],
   edges: [number, number][],
 ): void {
   if (!node.left || !node.right) return
-  connectTree(node.left, roomIndex, grid, params, rng, corridors, doors, edges)
-  connectTree(node.right, roomIndex, grid, params, rng, corridors, doors, edges)
+  connectTree(node.left, roomIndex, grid, params, rng, corridors, doors, connections, edges)
+  connectTree(node.right, roomIndex, grid, params, rng, corridors, doors, connections, edges)
   const leftRooms = roomsInSubtree(node.left, [])
   const rightRooms = roomsInSubtree(node.right, [])
   if (leftRooms.length === 0 || rightRooms.length === 0) return
   const [a, b] = closestPair(leftRooms, rightRooms)
   const aIdx = roomIndex.get(a.id)!
   const bIdx = roomIndex.get(b.id)!
-  if (connect(a, b, aIdx, bIdx, grid, params.corridorWidth, rng, corridors, doors, { respectBuffer: false })) edges.push([aIdx, bIdx])
+  if (connectRooms(a, b, aIdx, bIdx, grid, params.corridorWidth, rng, corridors, doors, connections, { respectBuffer: false })) {
+    edges.push([aIdx, bIdx])
+  }
 }
 
 /** Adds a handful of extra short corridors between nearby rooms that aren't
@@ -473,6 +224,7 @@ function addLoops(
   rng: Rng,
   corridors: Corridor[],
   doors: Door[],
+  connections: Connection[],
   edges: [number, number][],
 ): void {
   // A room pair already joined by the spanning tree gets no second corridor —
@@ -501,11 +253,11 @@ function addLoops(
       // distance — otherwise an occasional "shortcut" winds halfway around
       // the map to avoid other corridors, which isn't a shortcut at all.
       // dx/dy are already in grid cells (rooms live in grid space until the
-      // final world-unit conversion), matching `path.length`'s units.
+      // final world-unit conversion), matching the path's units.
       const straightLineCells = dx + dy
       const maxPathLength = straightLineCells * params.loopMaxDetour
       if (
-        connect(a, b, aIdx, bIdx, grid, Math.max(1, params.corridorWidth - 1), rng, corridors, doors, {
+        connectRooms(a, b, aIdx, bIdx, grid, Math.max(1, params.corridorWidth - 1), rng, corridors, doors, connections, {
           respectBuffer: true,
           maxPathLength,
         })
@@ -521,25 +273,17 @@ function addLoops(
  *  legend, sized to its EXPANDED footprint regardless of whether it's
  *  currently collapsed on screen — so toggling it never causes an overlap
  *  the generator didn't already avoid. Clamped so a tiny grid never loses
- *  more than half its area to the reservation. */
-function legendReservedRect(params: DungeonParams): { x: number; y: number; w: number; h: number } {
+ *  more than half its area to the reservation. Exported so manual edit-mode
+ *  connection ops (dungeonStore.ts) rebuild grids with the exact same
+ *  reservation, not a second, potentially-drifting copy of this math. */
+export function legendReservedRect(params: DungeonParams): { x: number; y: number; w: number; h: number } {
   const w = Math.min(Math.ceil((LEGEND_WIDTH + LEGEND_MARGIN) / CELL_SIZE), Math.floor(params.gridWidth / 2))
   const h = Math.min(Math.ceil((LEGEND_HEIGHT + LEGEND_MARGIN) / CELL_SIZE), Math.floor(params.gridHeight / 2))
   return { x: params.gridWidth - w, y: params.gridHeight - h, w, h }
 }
 
-/** Marks every cell of `rect` as permanently blocked (never free, never
- *  owned by a room) so corridor pathfinding routes around it. */
-function markReserved(grid: OwnerGrid, rect: { x: number; y: number; w: number; h: number }): void {
-  for (let y = rect.y; y < rect.y + rect.h; y++) {
-    for (let x = rect.x; x < rect.x + rect.w; x++) {
-      if (x >= 0 && y >= 0 && x < grid.w && y < grid.h) grid.data[y * grid.w + x] = -3
-    }
-  }
-}
-
-/** BFS over the room-adjacency graph (built from successful `connect()`
- *  calls) from `startIdx`, returning each reachable room's hop distance. */
+/** BFS over the room-adjacency graph (built from successful connections)
+ *  from `startIdx`, returning each reachable room's hop distance. */
 function bfsDistances(edges: [number, number][], roomCount: number, startIdx: number): number[] {
   const adjacency: number[][] = Array.from({ length: roomCount }, () => [])
   for (const [a, b] of edges) {
@@ -611,6 +355,7 @@ type LevelLayout = {
   rooms: Room[]
   corridors: Corridor[]
   doors: Door[]
+  connections: Connection[]
   edges: [number, number][]
 }
 
@@ -627,11 +372,12 @@ function buildLevelLayout(params: DungeonParams, rng: Rng): LevelLayout {
 
   const corridors: Corridor[] = []
   const doors: Door[] = []
+  const connections: Connection[] = []
   const edges: [number, number][] = []
-  connectTree(root, roomIndex, grid, params, rng, corridors, doors, edges)
-  addLoops(rooms, roomIndex, grid, params, rng, corridors, doors, edges)
+  connectTree(root, roomIndex, grid, params, rng, corridors, doors, connections, edges)
+  addLoops(rooms, roomIndex, grid, params, rng, corridors, doors, connections, edges)
 
-  return { rooms, corridors, doors, edges }
+  return { rooms, corridors, doors, connections, edges }
 }
 
 const toWorld = (r: { x: number; y: number; w: number; h: number }) => ({
@@ -651,6 +397,7 @@ export function generateDungeon(params: DungeonParams): DungeonScene {
   const allRooms: Room[] = []
   const allCorridors: Corridor[] = []
   const allDoors: Door[] = []
+  const allConnections: Connection[] = []
   const stairs: Stair[] = []
 
   let entranceRoomId: string | null = null
@@ -665,7 +412,7 @@ export function generateDungeon(params: DungeonParams): DungeonScene {
   let prevEntryIdx = -1 // which room in prevRooms was ITS OWN level-entry point
 
   for (let level = 0; level < levelCount; level++) {
-    const { rooms, corridors, doors, edges } = buildLevelLayout(params, rng)
+    const { rooms, corridors, doors, connections, edges } = buildLevelLayout(params, rng)
 
     let entryIdx = -1 // this level's own "arrival" room — where the party enters it
 
@@ -730,8 +477,9 @@ export function generateDungeon(params: DungeonParams): DungeonScene {
             : generateRoomEncounter(r, params.partyLevel, params.partySize, params.monsterChance, params.lootChance, params.encounterSeed),
       })),
     )
-    allCorridors.push(...corridors.map((c) => ({ ...toWorld(c), id: c.id, level })))
+    allCorridors.push(...corridors.map((c) => ({ ...toWorld(c), id: c.id, level, connectionId: c.connectionId })))
     allDoors.push(...doors.map((d) => ({ ...d, pos: { x: (d.pos.x + 0.5) * CELL_SIZE, y: (d.pos.y + 0.5) * CELL_SIZE }, level })))
+    allConnections.push(...connections.map((c) => ({ ...c, level })))
 
     prevRooms = rooms
     prevEntryIdx = entryIdx
@@ -743,6 +491,8 @@ export function generateDungeon(params: DungeonParams): DungeonScene {
     corridors: allCorridors,
     doors: allDoors,
     stairs,
+    connections: allConnections,
+    junctions: [],
     bounds: { width: params.gridWidth * CELL_SIZE, height: params.gridHeight * CELL_SIZE },
     entranceRoomId,
     entranceSide,

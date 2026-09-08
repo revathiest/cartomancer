@@ -355,6 +355,22 @@ them, likely per-room and per-door rather than an automatic "line of sight"
 system. Independent of the multi-level and multi-generator-mode work above —
 not yet scoped in detail.
 
+## Planned next feature: CR-targeted monster generator (raised 2026-08-19,
+not started)
+Given a target CR, generate an appropriate monster with a full stat block
+(attacks, HP, AC, abilities, etc.) sized to that CR — not just a CR label on
+a generic placeholder, as encounters currently have. Must be user-editable
+afterward, and since there's a CR target to maintain, editing needs to be
+"assisted": if the user removes or changes an ability (e.g. drops an
+attack), the tool should suggest compensating changes elsewhere (buff
+another stat, add a trait) to keep the monster near its original CR rather
+than silently drifting off-target after a hand edit. Not yet scoped: which
+CR-calculation formula to use (5e DMG's monster-building guidelines are the
+obvious source), the editable stat-block schema, and how "suggested
+changes" get surfaced (auto-apply vs. propose-and-confirm). Independent of
+the in-progress dungeon edit-mode work and the player-reveal-mode idea
+above.
+
 ## Landing page copy (2026-08-19, app-wide, not dungeon-specific)
 User asked for the landing page (`src/ui/Landing.tsx`/`Landing.css`) to
 welcome the user and explain Cartomancer's intent, not just present bare
@@ -367,6 +383,271 @@ Picker cards and their behavior unchanged; only added content above them
 plus a divider before "What are you mapping today?". Verified in-browser
 (both cards still navigate correctly, back button returns here).
 
+## Edit mode (2026-08-19)
+Catacombs gets a full parallel edit mode, mirroring the city tool's
+generate/edit split as originally planned ("look at city as a model"),
+sequenced as: Save/Load + undo → Select tool → Room tool → Corridor/door
+tool — all landed together here, on a new `feature/dungeon-edit-mode`
+branch off `main` (the dungeon-builder work was already merged).
+
+- **Mode/tool state** (`dungeonStore.ts`): `mode: 'generate' | 'edit'`,
+  `tool: 'select' | 'room' | 'corridor'`, `selection: { kind:
+  'room'|'corridor'|'door'|'stair'; id } | null` — same shape as city's
+  `mapStore.ts`, renamed for dungeon's entity kinds.
+- **Undo/redo** (`dungeon/history.ts`): a direct port of `state/history.ts`
+  (whole-scene snapshots, 60-deep stack, `structuredClone`) retargeted at
+  `DungeonScene`. Store exposes `snapshot()` (record a point before a
+  drag/gesture starts), `mutate()` (apply without recording — the
+  continuous steps of an already-snapshotted drag), `recordMutate()`
+  (record + apply — atomic one-shot edits like add/delete/flag-toggle),
+  `undo()`/`redo()`. Same distinction city's `mapStore.ts` draws, for the
+  same reason: a whole-scene undo stack recording every pointer-move would
+  be both huge and pointless (only the START of a gesture is a meaningful
+  undo point).
+- **Save/Load** (`dungeon/saveLoad.ts`): direct port of
+  `export/saveLoad.ts`, reusing the fully generic `export/filePicker.ts`
+  as-is. Own save kind `'dnd-map-maker-dungeon-save'` (deliberately
+  different from the city's) so a city save file can never be mistaken for
+  a dungeon one or vice versa. `loadScene()` drops into edit mode on the
+  loaded scene, same as city.
+- **Export PNG** (`export/exportPng.ts`): generalized to accept optional
+  `svgId`/`overlayId` (defaulting to the city's), rather than forking a
+  second copy — the rasterization logic was already fully generic, it just
+  had the city's DOM id hardcoded. Dungeon's `<svg>` now has
+  `id="dungeon-map-svg"` (exported as `DUNGEON_MAP_SVG_ID` from
+  `DungeonCanvas.tsx`) and passes it through.
+- **Report Issue** (`feedback/reportIssue.ts`): kept the city's
+  `buildIssueBody`/`openReportIssue` untouched and added a sibling
+  `buildDungeonIssueBody`/`openDungeonReportIssue` reading `DungeonParams`
+  instead — the two param shapes share no fields worth abstracting over
+  (districts/gates/rivers vs. levels/rooms/loot chance), so two small
+  functions beat one generic one here. Both share the actual
+  "open a prefilled GitHub issue tab" mechanics via a new `openIssueUrl()`
+  helper.
+- **Toolbar** (`DungeonToolbar.tsx`, new — the inline toolbar JSX
+  previously in `DungeonApp.tsx` is now its own component, matching city's
+  `ui/Toolbar.tsx`): Generate/Edit mode toggle; Select/Room/Corridor-Door
+  tool buttons and Undo/Redo (edit mode only); the existing level switcher
+  and room-count chip; Save/Load/Export PNG/Report Issue buttons.
+- **Selection panel** (`DungeonSelectionPanel.tsx`, new, matching city's
+  `editor/SelectionPanel.tsx`): shown in the sidebar instead of
+  `DungeonParamPanel` whenever `mode==='edit'`. Room/Corridor editors are
+  numeric X/Y/W/H fields (`onFocus={snapshot}` + `mutate`-only
+  `resizeRoom`/`resizeCorridor`, same pattern as city's `BuildingEditor`
+  sliders — one undo step per field-edit session, not per keystroke) plus
+  a delete button. Door editor is checkboxes (open/secret/stuck) and
+  locked/trapped selects, each an atomic `recordMutate` call via
+  `updateDoor`. Stair editor is read-only info + delete.
+- **Canvas interactions** (`DungeonCanvas.tsx`, the biggest piece):
+  - Every room/corridor gets an invisible interactive overlay rect
+    (rendered only when `mode==='edit'`) handling select (any tool) and,
+    when the matching tool is active, body-drag-to-move plus 4 corner
+    `ResizeHandle`s. Resize always recomputes from the FIXED opposite
+    corner + live pointer position each move (never an accumulated delta),
+    so there's no drift risk across a long drag; move uses an incremental
+    delta since the last pointer-move for the same reason. Both snap to
+    the grid (`CELL_SIZE`) only on release, so the drag itself feels
+    smooth rather than jumping cell-to-cell.
+  - "Room"/"Corridor" tools repurpose a background drag (which otherwise
+    pans the map) into rubber-banding a new rect via `addRoom`/
+    `addCorridor` — a drag shorter than half a cell is treated as a stray
+    click and produces nothing, rather than a useless minimum-size room.
+  - Corridor/Door tool: clicking near an existing room's wall (within 15
+    world units, computed via `nearestWallSide`) adds a plain door there if
+    none exists, or clicking an existing door removes it — a single click
+    toggles, discoverable without a separate "add door" sub-mode. Doors are
+    always independently selectable (any tool) via their own small
+    invisible hit-circle, rendered on top of the room/corridor overlay so a
+    door click always wins over the room/corridor beneath it.
+  - No collision avoidance on any manual add/move/resize — mirrors city's
+    "hand edits are final, no auto-avoidance" philosophy. A moved room can
+    overlap a corridor; that's the DM's call to notice and fix, not the
+    tool's to silently prevent.
+  - Deleting a room clears `entranceRoomId`/`bossRoomId` if it was either;
+    deleting a door/corridor/stair doesn't cascade to anything else
+    (a dangling reference is an acceptable, documented trade-off here, not
+    worth the complexity of cascade-deletion for a DM-facing hand-editor).
+- **Real bug found and fixed while verifying this**: `clientToWorld` (and
+  the pre-existing pan/zoom math it was extracted alongside) didn't account
+  for the SVG root's `preserveAspectRatio="xMidYMid meet"` — whenever the
+  canvas container's aspect ratio doesn't exactly match the current
+  view's, "meet" scales uniformly to the smaller of the two axis scales
+  and letterboxes (centers with empty space) the other axis. The old code
+  assumed independent X/Y scale factors with no letterbox offset, which is
+  invisible for DELTA-based interactions (pan-drag, move-drag — a constant
+  offset cancels out in the subtraction) but silently wrong for any
+  ABSOLUTE conversion (resize-to-cursor, add-rect corners, the door
+  wall-proximity hit-test) — caught via browser-driven testing of the
+  corridor-tool door toggle, which kept selecting "no door in range" at
+  points that were visually right on the wall. Fixed with a shared
+  `svgTransform(view, rect)` helper (uniform `scale = min(w-ratio,
+  h-ratio)` + centering offsets) used consistently by `clientToWorld`,
+  `onWheel`, and the pan handler — verified pan and zoom-to-cursor still
+  behave correctly after the fix, and the door toggle now hits reliably.
+- Verified in-browser: mode/tool switching, select + drag-move + corner
+  resize for both rooms and corridors, add-room and add-corridor via
+  drag, door add/remove toggle via the corridor tool, undo restoring exact
+  prior state and clearing selection, Save/Export/Report-Issue buttons all
+  firing without errors (a native-file-picker "already active" conflict
+  from clicking Save then Export back-to-back is an environment artifact
+  of the two sharing one OS-level picker, not a code bug — identical,
+  unmodified mechanism to the already-shipped city tool).
+
+## Hallways as real room-to-room connections (2026-08-19)
+The first cut of the Corridor tool (drag an empty rectangle, click a wall to
+toggle a plain door) missed the mark — user wanted hallways that are actual
+*connections* between two rooms, not decorative rectangles: pick two rooms
+and path a hallway between them; deleting a room reconnects whatever it was
+joining instead of leaving dangling stubs; doors auto-added (closed) at
+both room ends; moving a connected room drags its hallway along
+(auto-repathed). This is a real data-model change, not just a new tool —
+worked through with the user one decision at a time before starting:
+
+**Decisions, made in this order:**
+1. Deleting a room with connections: merge ALL its hallways at a shared
+   junction point (the room's former center) — no bridging pairs, no
+   picking-and-choosing. Up to 4 hallways meet directly at that junction
+   (whichever 4 are closest to the deleted room's center — simplest to path
+   reliably); if there are more than 4, the overflow ones tee into the SIDE
+   of one of those 4 instead of all converging on one point (user: "connect
+   all of the hallways at a common point. if 4 or fewer connections. If
+   more than that, then one of them may need to join a t-connection at the
+   nearest other hallway"). No preference expressed on which 4 specifically
+   — implemented as: closest 4 by straight-line distance from the deleted
+   room's center, since that was the "easiest to procedurally connect."
+2. Freeform corridors (a hallway with no room at one end) are dropped
+   entirely — the Corridor tool now ONLY means "connect two rooms."
+3. Duplicate connections (reconnecting an already-connected pair) are
+   blocked outright — no second parallel hallway, and the existing one
+   isn't reselected either, just a silent no-op.
+
+**Data model** (`types.ts`): new `Junction` (`id, level, pos`) — a bare
+point where hallways meet with no room and no door there. New `Connection`
+(`id, level, a, b, corridorIds, doorAId, doorBId`) where each endpoint is
+`{kind:'room', id}` or `{kind:'junction', id}` — the unit a hallway is
+edited/deleted/repathed as, never its individual corridor rectangles.
+`Corridor` gained a required `connectionId` (every corridor belongs to
+exactly one connection now — no more freestanding pieces). `DungeonScene`
+gained `connections[]`/`junctions[]`. `DungeonSelectionKind` swapped
+`'corridor'` for `'connection'`.
+
+**Shared pathing module** (`dungeon/pathing.ts`, new): the BFS/widen/
+rectangularize grid logic that used to live entirely inside
+`generateDungeon.ts` moved here, generalized so BOTH the procedural
+generator and manual edit-mode ops call the exact same code:
+- `findPath`/`widenPath` now take a `passIdx: number[]` (which owner-grid
+  indices count as "walkable as yourself") instead of hardcoded from/to
+  room indices — empty for a junction/point endpoint, which has no room
+  interior to walk through.
+- `findPath`'s goal is `{cell}` (a fixed point) OR `{cells: Set<string>}`
+  ("nearest cell in this set") — the second form is what makes a T-tie-in
+  possible: path to the nearest point on any of the 4 direct hallways'
+  corridor footprint, not a specific endpoint.
+- `connectEndpoints(from, to, ...)` replaces the old room-only `connect()`
+  — `from`/`to` are each `{kind:'room', room, idx}` or `{kind:'point', cell}`,
+  and a door is only ever created at a `'room'` end, never a `'point'`
+  (junction) end. Takes a `doorFlags: 'random' | 'closed'` — generation
+  keeps rolling random flags (`rollDoorFlags`), every manual/edit-mode
+  connection always gets `closedDoorFlags()` (fully closed, no lock/trap/
+  secret/stuck) per the user's explicit ask.
+- `tieIntoCells(from, targetCells, ...)` — the T-tie-in variant: paths to
+  the nearest cell in a set rather than a specific endpoint, creates a door
+  only if `from` is a room.
+- Grid/world unit conversion (`toGridRect`/`toWorldRect`/`toGridPoint`/
+  `toWorldPoint`/`toWorldDoorPos`, plus `CELL_SIZE` itself) also moved here
+  from `generateDungeon.ts` (which re-exports `CELL_SIZE` for existing
+  callers) — needed by manual ops just as much as generation.
+- **Bug caught during testing**: manual connection ops build corridors/
+  doors in grid space (like generation always has), but unlike generation
+  — which converts everything to world units in one final pass — the
+  store's first draft pushed the RAW grid-space results straight into
+  `scene.corridors`/`scene.doors`. Caught by inspecting a freshly-created
+  door's `pos` and finding grid-scale numbers (`{x:7, y:5.5}`) instead of
+  world-scale ones. Fixed with `toWorldCorridors`/`toWorldDoors` helpers in
+  `dungeonStore.ts`, applied at all three creation/repath sites.
+
+**Generator** (`generateDungeon.ts`): `connectTree`/`addLoops` now build a
+real `Connection` record for every successful join (not just corridors +
+doors), via a shared local `connectRooms()` wrapper around
+`connectEndpoints`. This matters beyond consistency — without it, a
+procedurally-generated dungeon's hallways wouldn't support move/delete
+repathing at all, only hand-added ones would, which would be a confusing
+product inconsistency. `legendReservedRect` exported so manual edit-mode
+grid-building (`dungeonStore.ts`) reuses the exact same reservation math
+rather than a second, potentially-drifting copy.
+
+**Store** (`dungeonStore.ts`):
+- `pendingConnection: {roomId} | null` + `clickConnectionRoom(roomId)` —
+  first room click sets it, a second click on a DIFFERENT room paths the
+  hallway (blocked if that pair's already connected), clicking the SAME
+  room cancels.
+- `cascadeDeleteRoom` — the deletion logic described above: gathers every
+  connection touching the room, removes their old corridor pieces and the
+  deleted-room-side doors up front, sorts by distance from the room's
+  center, repaths the closest ≤4 directly to a new junction there, tees
+  any beyond that into the nearest of those 4 via `tieIntoCells`. A
+  connection whose repath/tie-in genuinely can't find a path is removed
+  entirely (`removeConnectionEntirely`) rather than left pointing at a room
+  that no longer exists.
+- `repathRoomConnections(roomId)` — re-paths every connection touching one
+  room from scratch; called by the canvas once a move/resize drag ENDS
+  (not on every pointermove — repathing is a real grid search). Always
+  regenerates fresh closed doors rather than preserving old flags, since
+  the door's position necessarily moves with the path; if no path can be
+  found at all, the OLD geometry is put back rather than left deleted.
+  **Known trade-off, not yet raised with the user**: a repath discards
+  whatever lock/trap/secret/stuck customization the old doors had. Fine
+  for now, worth revisiting if it becomes annoying in practice.
+- Dropped `addCorridor`/`moveCorridor`/`resizeCorridor` entirely (freeform
+  corridors no longer exist per decision #2 above).
+
+**Canvas** (`DungeonCanvas.tsx`): Corridor tool's background drag-to-add
+and click-a-wall-to-toggle-a-door are both gone. A room click in Corridor
+tool now calls `clickConnectionRoom`; the pending room gets a highlighted
+outline plus a small center dot. Corridors are select-only in the edit
+overlay now (click → selects the owning connection; no move, no resize
+handles — a connection's shape is fully derived, never hand-adjusted
+directly). Room move/resize-end now also calls `repathRoomConnections`.
+Removed now-dead wall-hit-testing helpers (`nearestWallSide`, `WallSide`,
+`clamp`) that only existed for the old click-a-wall-to-add-a-door gesture.
+
+**Selection panel**: `ConnectionEditor` replaces `CorridorEditor` — no X/Y/
+W/H fields (nothing to hand-edit on a derived shape), just which two
+endpoints it joins (room, or "a junction with other hallways") and a
+delete button removing the whole hallway (both doors, every corridor
+piece). Tool hint text updated for the new click-two-rooms flow, plus a
+live hint swap while a connection is pending.
+
+**Verified** (mix of direct store calls — more precise than pixel-clicking
+thin corridor targets in this test environment — and real UI clicks):
+connecting two rooms via click-click (both the real click flow AND
+directly), duplicate-pair blocking, room deletion with a 2-connection
+pass-through room, room deletion with a 5-connection hub (confirmed: 2
+junctions created — one direct 4-way crossroads, one T-tie for the 5th;
+zero dangling room references afterward), undo/redo of the whole deletion
+cascade as one atomic step, move-and-repath changing a connection's
+corridor geometry to follow the room. Not re-verified end-to-end via real
+clicks for every case (delete/move were driven via console for precision)
+but the store logic is what the canvas calls either way — same code path.
+
+## Editable room encounters (2026-08-19)
+The one thing still missing from room editing: the monster/loot note
+itself. Added an Encounter section to the Room editor
+(`DungeonSelectionPanel.tsx`) below the X/Y/W/H fields — one CR + count
+field pair per monster group (with a remove button), an "Add monster
+group" button, and a Loot text field (freeform, since `loot` was already
+just a descriptive label string, not a strict enum). Rebuilds the whole
+`monsters`/`loot` pair on every change via a new `updateRoomEncounter(id,
+encounter)` store action (`mutate`-only, `onFocus={snapshot}` on every
+field — same one-undo-step-per-edit-session pattern as the X/Y/W/H fields
+and city's `BuildingEditor` sliders, not one undo step per keystroke).
+Clearing all monster groups and the loot field naturally reproduces the
+existing "deliberately empty room" state — `describeEncounter([])` plus a
+null loot renders nothing, no special-casing needed. Verified in-browser:
+editing CR and loot on a live room updates the map note text immediately,
+and undo correctly reverts both edits.
+
 ## Everything above is implemented and verified (typecheck, lint, in-browser).
-Still uncommitted on `feature/dungeon-builder` per standing preference — ask
-before committing.
+Currently on `feature/dungeon-edit-mode` (branched off `main`, which has the
+dungeon-builder work already merged). Uncommitted per standing preference —
+ask before committing.

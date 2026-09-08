@@ -62,7 +62,9 @@ export type Room = {
   encounter?: RoomEncounter | null
 }
 
-/** An axis-aligned corridor segment, drawn as a rectangle like a room. */
+/** An axis-aligned corridor segment, drawn as a rectangle like a room. Every
+ *  corridor is owned by exactly one Connection — there's no such thing as a
+ *  freestanding/unconnected corridor piece. */
 export type Corridor = {
   id: string
   x: number
@@ -70,6 +72,35 @@ export type Corridor = {
   w: number
   h: number
   level: number
+  connectionId: string
+}
+
+/** A bare point where 2+ hallways meet with no room there — created when a
+ *  room with connections is deleted, so the hallways that led to it stay
+ *  joined to each other instead of dead-ending in empty space. Never has a
+ *  door (a door only makes sense at an actual room threshold) and no
+ *  geometry of its own — the corridors meeting there simply fuse visually,
+ *  the same way any two touching corridors already do. */
+export type Junction = {
+  id: string
+  level: number
+  pos: Point
+}
+
+export type ConnectionEndpoint = { kind: 'room'; id: string } | { kind: 'junction'; id: string }
+
+/** One hallway between two endpoints (each a room or a junction), as a unit
+ *  — its corridor pieces, and the doors at each end (null on a junction
+ *  end, since junctions have no doors). Deleting a connection removes all
+ *  of these together; moving a connected room repaths it as a whole. */
+export type Connection = {
+  id: string
+  level: number
+  a: ConnectionEndpoint
+  b: ConnectionEndpoint
+  corridorIds: string[]
+  doorAId: string | null
+  doorBId: string | null
 }
 
 /** A door's lock/trap can be absent, mundane (a real key/mechanism), or
@@ -116,6 +147,8 @@ export type DungeonScene = {
   corridors: Corridor[]
   doors: Door[]
   stairs: Stair[]
+  connections: Connection[]
+  junctions: Junction[]
   bounds: { width: number; height: number }
   /** The room closest to the dungeon's outer edge — where the party comes
    *  in, on level 0. Null only if the dungeon somehow generated zero rooms. */

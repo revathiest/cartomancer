@@ -1,42 +1,43 @@
+import { useEffect } from 'react'
 import { useDungeonStore } from './dungeonStore.ts'
+import { DungeonToolbar } from './DungeonToolbar.tsx'
 import { DungeonParamPanel } from './DungeonParamPanel.tsx'
+import { DungeonSelectionPanel } from './DungeonSelectionPanel.tsx'
 import { DungeonCanvas } from './DungeonCanvas.tsx'
 
 export function DungeonApp({ onHome }: { onHome: () => void }) {
-  const levelCount = useDungeonStore((s) => s.params.levelCount)
-  const currentLevel = useDungeonStore((s) => s.currentLevel)
-  const setCurrentLevel = useDungeonStore((s) => s.setCurrentLevel)
-  const roomCount = useDungeonStore((s) => s.scene.rooms.filter((r) => r.level === s.currentLevel).length)
+  const mode = useDungeonStore((s) => s.mode)
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement
+      const typing = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT'
+      const store = useDungeonStore.getState()
+
+      if ((e.key === 'Delete' || e.key === 'Backspace') && !typing) {
+        if (store.selection) {
+          e.preventDefault()
+          store.deleteSelected()
+        }
+      } else if (e.key === 'Escape') {
+        store.select(null)
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
+        e.preventDefault()
+        store.undo()
+      } else if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) {
+        e.preventDefault()
+        store.redo()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   return (
     <div className="app">
-      <div className="toolbar">
-        <button className="btn" onClick={onHome} title="Back to map type selection">
-          🏠 Menu
-        </button>
-        <div className="toolbar-title">⚔ Cartomancer — Dungeon</div>
-        <div className="toolbar-spacer" />
-        {levelCount > 1 && (
-          <div className="seg" title="Switch between stacked levels">
-            {Array.from({ length: levelCount }, (_, i) => (
-              <button
-                key={i}
-                className={i === currentLevel ? 'seg-btn active' : 'seg-btn'}
-                onClick={() => setCurrentLevel(i)}
-              >
-                Level {i + 1}
-              </button>
-            ))}
-          </div>
-        )}
-        <div className="chip" title="Rooms on the current level">
-          🚪 {roomCount} rooms
-        </div>
-      </div>
+      <DungeonToolbar onHome={onHome} />
       <div className="workspace">
-        <aside className="sidebar">
-          <DungeonParamPanel />
-        </aside>
+        <aside className="sidebar">{mode === 'generate' ? <DungeonParamPanel /> : <DungeonSelectionPanel />}</aside>
         <main className="canvas-host">
           <DungeonCanvas />
         </main>

@@ -1,4 +1,5 @@
 import type { GenParams } from '../shared/types.ts'
+import type { DungeonParams } from '../dungeon/types.ts'
 
 const REPO_URL = 'https://github.com/revathiest/cartomancer'
 const MERGE_FAILURE_LOG_KEY = 'dnd-map-maker:merge-failure-log'
@@ -60,12 +61,67 @@ function buildIssueBody(params: GenParams): string {
   return body.length > MAX_BODY_LENGTH ? body.slice(0, MAX_BODY_LENGTH) + '\n\n(truncated)' : body
 }
 
+/** Opens a new GitHub issue for this project in a new tab, prefilled with
+ *  the given title/body — the actual browser-tab-opening mechanics, shared
+ *  by both the city and dungeon report-issue flows below. */
+function openIssueUrl(title: string, body: string): void {
+  const url = new URL(`${REPO_URL}/issues/new`)
+  url.searchParams.set('title', title)
+  url.searchParams.set('body', body)
+  window.open(url.toString(), '_blank', 'noopener,noreferrer')
+}
+
 /** Opens a new GitHub issue for this project in a new tab, pre-filled with
  *  a description template and auto-collected environment/city context so
  *  reporters don't have to dig any of that up themselves. */
 export function openReportIssue(params: GenParams): void {
-  const url = new URL(`${REPO_URL}/issues/new`)
-  url.searchParams.set('title', 'Bug: ')
-  url.searchParams.set('body', buildIssueBody(params))
-  window.open(url.toString(), '_blank', 'noopener,noreferrer')
+  openIssueUrl('Bug: ', buildIssueBody(params))
+}
+
+/** Same idea as `buildIssueBody`, but for the dungeon tool's own param
+ *  shape — a separate function rather than a generalized one because the
+ *  two param types share no fields worth abstracting over (a city has
+ *  districts/gates/rivers; a dungeon has levels/rooms/loot chance). */
+function buildDungeonIssueBody(params: DungeonParams): string {
+  const failureCount = mergeFailureCount()
+  const lines = [
+    'What happened?',
+    '(Describe the bug, and what you expected to happen instead.)',
+    '',
+    '',
+    'Steps to reproduce',
+    '1. ',
+    '2. ',
+    '3. ',
+    '',
+    '',
+    '----------------------------------------',
+    "Everything below this line is filled in automatically — please leave it as-is, it helps track down the bug.",
+    '',
+    `Dungeon name: ${params.dungeonName}`,
+    `Seed: ${params.seed}`,
+    `Encounter seed: ${params.encounterSeed}`,
+    `Party: level ${params.partyLevel}, ${params.partySize} members`,
+    `Grid: ${params.gridWidth} x ${params.gridHeight}`,
+    `Room size: ${params.minRoomSize}-${params.maxRoomSize}`,
+    `Layout depth: ${params.maxDepth}`,
+    `Corridor width: ${params.corridorWidth}`,
+    `Loop chance: ${params.loopChance}`,
+    `Loop max detour: ${params.loopMaxDetour}`,
+    `Levels: ${params.levelCount}`,
+    `Monster chance: ${params.monsterChance}`,
+    `Loot chance: ${params.lootChance}`,
+    `Browser: ${navigator.userAgent}`,
+    `Window size: ${window.innerWidth} x ${window.innerHeight}`,
+    ...(failureCount > 0
+      ? [`Note: ${failureCount} building-merge issue(s) were also recorded automatically on this device.`]
+      : []),
+  ]
+  const body = lines.join('\n')
+  return body.length > MAX_BODY_LENGTH ? body.slice(0, MAX_BODY_LENGTH) + '\n\n(truncated)' : body
+}
+
+/** Dungeon-tool equivalent of `openReportIssue`. */
+export function openDungeonReportIssue(params: DungeonParams): void {
+  openIssueUrl('Bug: ', buildDungeonIssueBody(params))
 }

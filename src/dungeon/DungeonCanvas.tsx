@@ -5,10 +5,119 @@ import { MapDefs, MAP_FONT } from '../rendering/style/filters.tsx'
 import { describeEncounter } from './encounters.ts'
 import { LEGEND_WIDTH, LEGEND_HEIGHT, LEGEND_PAD, LEGEND_ROW_H, LEGEND_MARGIN } from './legendLayout.ts'
 import { unionPolygonsRobust, toPath } from '../shared/geometry.ts'
+import { CELL_SIZE } from './generateDungeon.ts'
 import type { Point } from '../shared/types.ts'
 import type { Corridor, Door, Room, SecurityKind } from './types.ts'
 
+export const DUNGEON_MAP_SVG_ID = 'dungeon-map-svg'
+
 type View = { x: number; y: number; w: number; h: number }
+type Rect = { x: number; y: number; w: number; h: number }
+
+/** The SVG root uses `preserveAspectRatio="xMidYMid meet"`, which — whenever
+ *  the container's aspect ratio doesn't exactly match the current view's —
+ *  scales uniformly to the SMALLER of the two axis scales and letterboxes
+ *  (centers with empty space) the other axis. Converting a client point to
+ *  world space or vice versa has to account for that letterbox offset, or
+ *  it silently drifts off by a constant amount on whichever axis is
+ *  letterboxed: fine for delta-based drags (a constant offset cancels out
+ *  in the subtraction) but wrong for any ABSOLUTE conversion — resize,
+ *  add-rect placement, wall-proximity hit-testing. */
+function svgTransform(view: View, rect: { width: number; height: number }) {
+  const scale = Math.min(rect.width / view.w, rect.height / view.h)
+  return {
+    scale,
+    offsetX: (rect.width - view.w * scale) / 2,
+    offsetY: (rect.height - view.h * scale) / 2,
+  }
+}
+
+const snapCoord = (v: number) => Math.round(v / CELL_SIZE) * CELL_SIZE
+const snapSize = (v: number) => Math.max(CELL_SIZE, Math.round(v / CELL_SIZE) * CELL_SIZE)
+
+type Corner = 'nw' | 'ne' | 'sw' | 'se'
+const CORNERS: Corner[] = ['nw', 'ne', 'sw', 'se']
+
+/** Computes a new rect from dragging one corner, keeping the OPPOSITE
+ *  corner fixed as the anchor — recomputed fresh from the current rect and
+ *  live pointer position every move, never from an accumulated delta, so
+ *  there's no drift risk across a long drag. */
+function resizePatch(corner: Corner, rect: Rect, p: Point): Rect {
+  const left = rect.x
+  const top = rect.y
+  const right = rect.x + rect.w
+  const bottom = rect.y + rect.h
+  if (corner === 'se') return { x: left, y: top, w: Math.max(CELL_SIZE, p.x - left), h: Math.max(CELL_SIZE, p.y - top) }
+  if (corner === 'sw') {
+    const x = Math.min(p.x, right - CELL_SIZE)
+    return { x, y: top, w: right - x, h: Math.max(CELL_SIZE, p.y - top) }
+  }
+  if (corner === 'ne') {
+    const y = Math.min(p.y, bottom - CELL_SIZE)
+    return { x: left, y, w: Math.max(CELL_SIZE, p.x - left), h: bottom - y }
+  }
+  // nw
+  const x = Math.min(p.x, right - CELL_SIZE)
+  const y = Math.min(p.y, bottom - CELL_SIZE)
+  return { x, y, w: right - x, h: bottom - y }
+}
+
+function cornerPoint(rect: Rect, corner: Corner): Point {
+  const cx = corner === 'nw' || corner === 'sw' ? rect.x : rect.x + rect.w
+  const cy = corner === 'nw' || corner === 'ne' ? rect.y : rect.y + rect.h
+  return { x: cx, y: cy }
+}
+
+const CURSOR_FOR_CORNER: Record<Corner, string> = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize' }
+
+/** A small draggable square at one corner of a selected room/corridor —
+ *  resizes by reporting raw client coordinates; the caller (which has the
+ *  canvas's own pan/zoom state) converts to world space and computes the
+ *  new rect via `resizePatch`. */
+function ResizeHandle({
+  corner,
+  point,
+  onDragStart,
+  onDrag,
+  onDragEnd,
+}: {
+  corner: Corner
+  point: Point
+  onDragStart: () => void
+  onDrag: (clientX: number, clientY: number) => void
+  onDragEnd: () => void
+}) {
+  const dragging = useRef(false)
+  return (
+    <rect
+      x={point.x - 5}
+      y={point.y - 5}
+      width={10}
+      height={10}
+      fill={THEME.parchment}
+      stroke={THEME.selection}
+      strokeWidth={2}
+      style={{ cursor: CURSOR_FOR_CORNER[corner] }}
+      pointerEvents="auto"
+      onPointerDown={(e) => {
+        e.stopPropagation()
+        ;(e.target as Element).setPointerCapture(e.pointerId)
+        dragging.current = true
+        onDragStart()
+      }}
+      onPointerMove={(e) => {
+        if (!dragging.current) return
+        onDrag(e.clientX, e.clientY)
+      }}
+      onPointerUp={(e) => {
+        if (!dragging.current) return
+        dragging.current = false
+        onDragEnd()
+        ;(e.target as Element).releasePointerCapture(e.pointerId)
+      }}
+    />
+  )
+}
 
 /** Corridor rectangles are generated as many touching/overlapping pieces
  *  (one per straight run, plus loop shortcuts) — stroking each individually
@@ -501,6 +610,20 @@ export function DungeonCanvas() {
   const showRoomNotes = useDungeonStore((s) => s.showRoomNotes)
   const currentLevel = useDungeonStore((s) => s.currentLevel)
 
+  const mode = useDungeonStore((s) => s.mode)
+  const tool = useDungeonStore((s) => s.tool)
+  const selection = useDungeonStore((s) => s.selection)
+  const select = useDungeonStore((s) => s.select)
+  const snapshot = useDungeonStore((s) => s.snapshot)
+  const moveRoom = useDungeonStore((s) => s.moveRoom)
+  const resizeRoom = useDungeonStore((s) => s.resizeRoom)
+  const addRoom = useDungeonStore((s) => s.addRoom)
+  const repathRoomConnections = useDungeonStore((s) => s.repathRoomConnections)
+  const pendingConnection = useDungeonStore((s) => s.pendingConnection)
+  const clickConnectionRoom = useDungeonStore((s) => s.clickConnectionRoom)
+  const cancelConnection = useDungeonStore((s) => s.cancelConnection)
+  const editing = mode === 'edit'
+
   const rooms = useMemo(() => allRooms.filter((r) => r.level === currentLevel), [allRooms, currentLevel])
   const corridors = useMemo(() => allCorridors.filter((c) => c.level === currentLevel), [allCorridors, currentLevel])
   const doors = useMemo(() => allDoors.filter((d) => d.level === currentLevel), [allDoors, currentLevel])
@@ -554,50 +677,114 @@ export function DungeonCanvas() {
 
   const panState = useRef<{ x: number; y: number; view: View } | null>(null)
 
+  const clientToWorld = useCallback(
+    (clientX: number, clientY: number): Point => {
+      const svg = svgRef.current
+      if (!svg) return { x: 0, y: 0 }
+      const rect = svg.getBoundingClientRect()
+      const t = svgTransform(view, rect)
+      return {
+        x: view.x + (clientX - rect.left - t.offsetX) / t.scale,
+        y: view.y + (clientY - rect.top - t.offsetY) / t.scale,
+      }
+    },
+    [view],
+  )
+
+  // Room/corridor move-drag state — not in the store, since only the
+  // gesture in progress needs it, same pattern as the city editor's drag
+  // refs. `last` is the previous pointer-move's world position so each
+  // step moves by an incremental delta, avoiding any drift from the
+  // (irrelevant) drag's total distance.
+  const moveDrag = useRef<{ kind: 'room' | 'corridor'; id: string; last: Point } | null>(null)
+  // In-progress "drag empty space to add a room/corridor" rectangle, in
+  // world coordinates — null when no add-drag is active.
+  const [addDraft, setAddDraft] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null)
+
   const onWheel = useCallback(
     (e: React.WheelEvent) => {
       e.preventDefault()
       const svg = svgRef.current
       if (!svg) return
       const rect = svg.getBoundingClientRect()
-      const mx = (e.clientX - rect.left) / rect.width
-      const my = (e.clientY - rect.top) / rect.height
+      const t = svgTransform(view, rect)
+      const wx = view.x + (e.clientX - rect.left - t.offsetX) / t.scale
+      const wy = view.y + (e.clientY - rect.top - t.offsetY) / t.scale
       const factor = e.deltaY > 0 ? 1.12 : 1 / 1.12
       const newW = Math.min(bounds.width * 3, Math.max(bounds.width * 0.1, view.w * factor))
       const newH = newW * (view.h / view.w)
-      const wx = view.x + mx * view.w
-      const wy = view.y + my * view.h
-      setView({ x: wx - mx * newW, y: wy - my * newH, w: newW, h: newH })
+      // Fraction of the cursor's world point within the OLD view, reapplied
+      // to the new (zoomed) view, keeps that point fixed under the cursor.
+      const fracX = (wx - view.x) / view.w
+      const fracY = (wy - view.y) / view.h
+      setView({ x: wx - fracX * newW, y: wy - fracY * newH, w: newW, h: newH })
     },
     [bounds.width, view],
   )
 
+  // In the Room tool, a background drag draws a new room instead of panning
+  // — the map still pans in every other mode/tool. The Corridor tool no
+  // longer draws freeform shapes at all; it only connects two rooms (see
+  // `pendingConnection`), so a background click there just cancels whatever
+  // connection was pending, same as it would deselect in Select tool.
+  const addToolActive = editing && tool === 'room'
+
   const onPointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return
     ;(e.target as Element).setPointerCapture(e.pointerId)
+    if (addToolActive) {
+      const p = clientToWorld(e.clientX, e.clientY)
+      setAddDraft({ x0: p.x, y0: p.y, x1: p.x, y1: p.y })
+      return
+    }
+    if (editing) {
+      select(null)
+      if (tool === 'corridor') cancelConnection()
+    }
     panState.current = { x: e.clientX, y: e.clientY, view }
   }
 
   const onPointerMove = (e: React.PointerEvent) => {
+    if (addDraft) {
+      const p = clientToWorld(e.clientX, e.clientY)
+      setAddDraft({ ...addDraft, x1: p.x, y1: p.y })
+      return
+    }
     const ps = panState.current
     if (!ps) return
     const svg = svgRef.current
     if (!svg) return
     const rect = svg.getBoundingClientRect()
-    const scaleX = ps.view.w / rect.width
-    const scaleY = ps.view.h / rect.height
-    const dx = (e.clientX - ps.x) * scaleX
-    const dy = (e.clientY - ps.y) * scaleY
+    const t = svgTransform(ps.view, rect)
+    const dx = (e.clientX - ps.x) / t.scale
+    const dy = (e.clientY - ps.y) / t.scale
     setView({ x: ps.view.x - dx, y: ps.view.y - dy, w: ps.view.w, h: ps.view.h })
   }
 
   const onPointerUp = (e: React.PointerEvent) => {
+    if (addDraft) {
+      const x = snapCoord(Math.min(addDraft.x0, addDraft.x1))
+      const y = snapCoord(Math.min(addDraft.y0, addDraft.y1))
+      const w = snapSize(Math.abs(addDraft.x1 - addDraft.x0))
+      const h = snapSize(Math.abs(addDraft.y1 - addDraft.y0))
+      setAddDraft(null)
+      // A drag shorter than half a cell reads as a stray click, not an
+      // intentional add — skip rather than create a minimum-size room
+      // nobody meant to place.
+      if (Math.abs(addDraft.x1 - addDraft.x0) > CELL_SIZE / 2 || Math.abs(addDraft.y1 - addDraft.y0) > CELL_SIZE / 2) {
+        const id = addRoom({ x, y, w, h })
+        select({ kind: 'room', id })
+      }
+      ;(e.target as Element).releasePointerCapture(e.pointerId)
+      return
+    }
     panState.current = null
     ;(e.target as Element).releasePointerCapture(e.pointerId)
   }
 
   return (
     <svg
+      id={DUNGEON_MAP_SVG_ID}
       ref={svgRef}
       width="100%"
       height="100%"
@@ -663,6 +850,186 @@ export function DungeonCanvas() {
 
         <Legend bounds={bounds} />
       </g>
+
+      {editing && (
+        <g>
+          {rooms.map((r) => {
+            const isSelected = selection?.kind === 'room' && selection.id === r.id
+            const isPending = tool === 'corridor' && pendingConnection?.roomId === r.id
+            return (
+              <g key={`edit-room-${r.id}`}>
+                <rect
+                  x={r.x}
+                  y={r.y}
+                  width={r.w}
+                  height={r.h}
+                  fill="transparent"
+                  stroke={isSelected || isPending ? THEME.selection : 'transparent'}
+                  strokeWidth={2}
+                  strokeDasharray="4,3"
+                  style={{ cursor: tool === 'room' ? 'move' : 'pointer' }}
+                  pointerEvents="auto"
+                  onPointerDown={(e) => {
+                    e.stopPropagation()
+                    if (tool === 'corridor') {
+                      clickConnectionRoom(r.id)
+                      return
+                    }
+                    select({ kind: 'room', id: r.id })
+                    if (tool !== 'room') return
+                    ;(e.target as Element).setPointerCapture(e.pointerId)
+                    snapshot()
+                    moveDrag.current = { kind: 'room', id: r.id, last: clientToWorld(e.clientX, e.clientY) }
+                  }}
+                  onPointerMove={(e) => {
+                    const d = moveDrag.current
+                    if (!d || d.kind !== 'room' || d.id !== r.id) return
+                    const cur = clientToWorld(e.clientX, e.clientY)
+                    moveRoom(r.id, cur.x - d.last.x, cur.y - d.last.y)
+                    moveDrag.current = { kind: 'room', id: r.id, last: cur }
+                  }}
+                  onPointerUp={(e) => {
+                    const d = moveDrag.current
+                    if (d?.kind === 'room' && d.id === r.id) {
+                      const room = useDungeonStore.getState().scene.rooms.find((x) => x.id === r.id)
+                      if (room) resizeRoom(r.id, { x: snapCoord(room.x), y: snapCoord(room.y) })
+                      moveDrag.current = null
+                      ;(e.target as Element).releasePointerCapture(e.pointerId)
+                      repathRoomConnections(r.id)
+                    }
+                  }}
+                />
+                {isPending && <circle cx={r.x + r.w / 2} cy={r.y + r.h / 2} r={6} fill={THEME.selection} pointerEvents="none" />}
+                {isSelected &&
+                  tool === 'room' &&
+                  CORNERS.map((corner) => (
+                    <ResizeHandle
+                      key={corner}
+                      corner={corner}
+                      point={cornerPoint(r, corner)}
+                      onDragStart={snapshot}
+                      onDrag={(cx, cy) => {
+                        const p = clientToWorld(cx, cy)
+                        resizeRoom(r.id, resizePatch(corner, r, p))
+                      }}
+                      onDragEnd={() => {
+                        const room = useDungeonStore.getState().scene.rooms.find((x) => x.id === r.id)
+                        if (room) resizeRoom(r.id, { x: snapCoord(room.x), y: snapCoord(room.y), w: snapSize(room.w), h: snapSize(room.h) })
+                        repathRoomConnections(r.id)
+                      }}
+                    />
+                  ))}
+              </g>
+            )
+          })}
+
+          {corridors.map((c) => {
+            const isSelected = selection?.kind === 'connection' && selection.id === c.connectionId
+            return (
+              <rect
+                key={`edit-corridor-${c.id}`}
+                x={c.x}
+                y={c.y}
+                width={c.w}
+                height={c.h}
+                fill="transparent"
+                stroke={isSelected ? THEME.selection : 'transparent'}
+                strokeWidth={2}
+                strokeDasharray="4,3"
+                style={{ cursor: 'pointer' }}
+                pointerEvents="auto"
+                onPointerDown={(e) => {
+                  e.stopPropagation()
+                  select({ kind: 'connection', id: c.connectionId })
+                }}
+              />
+            )
+          })}
+
+          {doors.map((d) => {
+            const isSelected = selection?.kind === 'door' && selection.id === d.id
+            return (
+              <circle
+                key={`edit-door-${d.id}`}
+                cx={d.pos.x}
+                cy={d.pos.y}
+                r={11}
+                fill="transparent"
+                stroke={isSelected ? THEME.selection : 'transparent'}
+                strokeWidth={2}
+                style={{ cursor: 'pointer' }}
+                pointerEvents="auto"
+                onPointerDown={(e) => {
+                  e.stopPropagation()
+                  select({ kind: 'door', id: d.id })
+                }}
+              />
+            )
+          })}
+
+          {stairsDown.map((s) => {
+            const pos = stairCornerPos(s.roomFromId, s.posFrom)
+            const isSelected = selection?.kind === 'stair' && selection.id === s.id
+            return (
+              <rect
+                key={`edit-stair-down-${s.id}`}
+                x={pos.x - STAIR_BADGE_W / 2}
+                y={pos.y - STAIR_BADGE_H / 2}
+                width={STAIR_BADGE_W}
+                height={STAIR_BADGE_H}
+                rx={STAIR_BADGE_H / 2}
+                fill="transparent"
+                stroke={isSelected ? THEME.selection : 'transparent'}
+                strokeWidth={2}
+                style={{ cursor: 'pointer' }}
+                pointerEvents="auto"
+                onPointerDown={(e) => {
+                  e.stopPropagation()
+                  select({ kind: 'stair', id: s.id })
+                }}
+              />
+            )
+          })}
+          {stairsUp.map((s) => {
+            const pos = stairCornerPos(s.roomToId, s.posTo)
+            const isSelected = selection?.kind === 'stair' && selection.id === s.id
+            return (
+              <rect
+                key={`edit-stair-up-${s.id}`}
+                x={pos.x - STAIR_BADGE_W / 2}
+                y={pos.y - STAIR_BADGE_H / 2}
+                width={STAIR_BADGE_W}
+                height={STAIR_BADGE_H}
+                rx={STAIR_BADGE_H / 2}
+                fill="transparent"
+                stroke={isSelected ? THEME.selection : 'transparent'}
+                strokeWidth={2}
+                style={{ cursor: 'pointer' }}
+                pointerEvents="auto"
+                onPointerDown={(e) => {
+                  e.stopPropagation()
+                  select({ kind: 'stair', id: s.id })
+                }}
+              />
+            )
+          })}
+
+          {addDraft && (
+            <rect
+              x={Math.min(addDraft.x0, addDraft.x1)}
+              y={Math.min(addDraft.y0, addDraft.y1)}
+              width={Math.abs(addDraft.x1 - addDraft.x0)}
+              height={Math.abs(addDraft.y1 - addDraft.y0)}
+              fill={THEME.selection}
+              fillOpacity={0.15}
+              stroke={THEME.selection}
+              strokeWidth={2}
+              strokeDasharray="6,4"
+              pointerEvents="none"
+            />
+          )}
+        </g>
+      )}
     </svg>
   )
 }
