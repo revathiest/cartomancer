@@ -1,0 +1,239 @@
+/* DM Screen tool — restyled to sit on Cartomancer's shared design system
+   (src/shared/layout.css + the :root palette in src/index.css). Structural
+   classes below are scoped under .dmscreen so DM Screen's card/table/list
+   layout can coexist with Cartomancer's canvas-tool classes that happen to
+   share names (.field, .row, .btn modifiers) without either side winning by
+   load order. Color values are aliased to Cartomancer's --panel-* / --accent
+   variables (not new hexes) so this tool reads identically to City/Dungeon. */
+
+.dmscreen {
+  --bg: #1a1613;
+  --panel: var(--panel-bg);
+  --panel-alt: var(--panel-bg-alt);
+  --border: var(--panel-border);
+  --border-soft: var(--panel-border);
+  --text: var(--panel-text);
+  --text-dim: var(--panel-text-dim);
+  --text-faint: #8a7d68;
+  --accent-dim: #a3812f;
+  --red: var(--danger);
+  --green: #5a8a52;
+}
+
+.dmscreen-main {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.7rem 0.9rem;
+}
+
+.dmscreen-main::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.dmscreen-main::-webkit-scrollbar-track {
+  background: transparent;
+}
+.dmscreen-main::-webkit-scrollbar-thumb {
+  background: var(--panel-border);
+  border-radius: 4px;
+}
+
+.dmscreen .page {
+  height: 100%;
+  width: 100%;
+}
+
+/* Masonry: explicit flex columns, hand-balanced per page in JSX. Each card sizes to
+   its own content (no forced equal heights / dead space). Deliberately NOT CSS
+   multi-column: browser column-balancing can silently shove overflow cards into
+   extra columns beyond the container width, clipping them off-screen. This is
+   plain flexbox instead — fully predictable, and if a page's content genuinely
+   exceeds the viewport, .dmscreen-main's scrollbar is the fallback, not clipping. */
+.dmscreen .masonry-row {
+  height: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+}
+
+.dmscreen .masonry-col {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.dmscreen .tracker-page {
+  display: grid;
+  gap: 0.6rem;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: auto auto 1fr;
+  grid-template-areas:
+    "add controls"
+    "list list"
+    "list list";
+}
+.dmscreen .area-add { grid-area: add; }
+.dmscreen .area-controls { grid-area: controls; }
+.dmscreen .area-list { grid-area: list; }
+
+.dmscreen .card {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 0.4rem 0.6rem;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.dmscreen .card-title {
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  border-bottom: 1px solid var(--panel-border);
+  padding-bottom: 0.22rem;
+  margin-bottom: 0.28rem;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.dmscreen .card-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  font-size: 0.76rem;
+  line-height: 1.2;
+}
+
+.dmscreen .card-note {
+  flex: 0 0 auto;
+  font-size: 0.64rem;
+  color: var(--text-faint);
+  margin-top: 0.22rem;
+  font-style: italic;
+  line-height: 1.15;
+}
+
+.dmscreen table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.74rem;
+}
+
+.dmscreen th,
+.dmscreen td {
+  text-align: left;
+  padding: 0.1rem 0.4rem;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.dmscreen th {
+  color: var(--text-faint);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.64rem;
+  letter-spacing: 0.04em;
+  position: sticky;
+  top: 0;
+  background: var(--panel-bg);
+}
+
+.dmscreen .tight-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.22rem;
+}
+
+.dmscreen .tight-list li {
+  padding-bottom: 0.22rem;
+  border-bottom: 1px dashed var(--panel-border);
+}
+
+.dmscreen .tight-list li:last-child {
+  border-bottom: none;
+}
+
+.dmscreen .kv {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.15rem 0.6rem;
+}
+
+.dmscreen .kv dt {
+  font-weight: 700;
+  color: var(--accent-dim);
+  white-space: nowrap;
+}
+
+.dmscreen .kv dd {
+  margin: 0;
+}
+
+/* Cartomancer's global .btn (shared/layout.css) already supplies the base
+   look; these add the modifiers DM Screen's markup uses that City/Dungeon
+   don't need. .primary mirrors Cartomancer's own .btn.accent treatment. */
+.dmscreen .btn.primary {
+  background: var(--accent);
+  color: #1a1613;
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.dmscreen .btn.primary:hover {
+  background: var(--accent-hover);
+}
+
+.dmscreen .btn.small {
+  padding: 0.12rem 0.4rem;
+  font-size: 0.66rem;
+}
+
+.dmscreen .row {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.dmscreen .pill {
+  display: inline-block;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  font-size: 0.62rem;
+  border: 1px solid var(--panel-border);
+  color: var(--panel-text-dim);
+  background: var(--panel-bg-alt);
+}
+
+.dmscreen .gen-output {
+  background: var(--panel-bg-alt);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 0.5rem 0.6rem;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  flex: 1 1 auto;
+  overflow-y: auto;
+}
+
+/* Shadows Cartomancer's global .field (a label+input wrapper) on purpose:
+   DM Screen uses .field directly on <select> as an input-style box. Scoping
+   under .dmscreen wins on specificity so both meanings coexist. */
+.dmscreen .field {
+  border: 1px solid var(--panel-border);
+  background: var(--panel-bg-alt);
+  color: var(--panel-text);
+  border-radius: 6px;
+  padding: 0.25rem 0.45rem;
+  font-size: 0.75rem;
+}

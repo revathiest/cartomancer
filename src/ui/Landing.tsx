@@ -1,6 +1,14 @@
 import './Landing.css'
 
-export function Landing({ onSelectCity, onSelectDungeon }: { onSelectCity: () => void; onSelectDungeon: () => void }) {
+export function Landing({
+  onSelectCity,
+  onSelectDungeon,
+  onSelectDMScreen,
+}: {
+  onSelectCity: () => void
+  onSelectDungeon: () => void
+  onSelectDMScreen: () => void
+}) {
   return (
     <div className="landing">
       <div className="landing-hero">
@@ -31,6 +39,15 @@ export function Landing({ onSelectCity, onSelectDungeon }: { onSelectCity: () =>
           <p className="landing-card-desc">
             Carve a dungeon layout — rooms, corridors, doors, and stairs between levels — from a seeded,
             randomized floor plan.
+          </p>
+        </button>
+
+        <button className="landing-card" onClick={onSelectDMScreen}>
+          <div className="landing-card-icon">⚔</div>
+          <div className="landing-card-title">DM Screen</div>
+          <p className="landing-card-desc">
+            Core rules, monsters, generators, and a combat tracker — the reference tables you reach for
+            mid-session.
           </p>
         </button>
       </div>
