@@ -125,3 +125,34 @@ function buildDungeonIssueBody(params: DungeonParams): string {
 export function openDungeonReportIssue(params: DungeonParams): void {
   openIssueUrl('Bug: ', buildDungeonIssueBody(params))
 }
+
+/** DM Screen equivalent of `buildIssueBody` — there's no generation params
+ *  to attach (it's a reference tool, not a map generator), so the only
+ *  useful automatic context is which reference page was open. */
+function buildDMScreenIssueBody(pageLabel: string): string {
+  const lines = [
+    'What happened?',
+    '(Describe the bug, and what you expected to happen instead.)',
+    '',
+    '',
+    'Steps to reproduce',
+    '1. ',
+    '2. ',
+    '3. ',
+    '',
+    '',
+    '----------------------------------------',
+    "Everything below this line is filled in automatically — please leave it as-is, it helps track down the bug.",
+    '',
+    `DM Screen page: ${pageLabel}`,
+    `Browser: ${navigator.userAgent}`,
+    `Window size: ${window.innerWidth} x ${window.innerHeight}`,
+  ]
+  const body = lines.join('\n')
+  return body.length > MAX_BODY_LENGTH ? body.slice(0, MAX_BODY_LENGTH) + '\n\n(truncated)' : body
+}
+
+/** DM Screen equivalent of `openReportIssue`. */
+export function openDMScreenReportIssue(pageLabel: string): void {
+  openIssueUrl('Bug: ', buildDMScreenIssueBody(pageLabel))
+}

@@ -5,6 +5,7 @@ import CombatTracker from "./pages/CombatTracker";
 import MonsterReference from "./pages/MonsterReference";
 import Generators from "./pages/Generators";
 import EnvironmentTravel from "./pages/EnvironmentTravel";
+import { openDMScreenReportIssue } from "../feedback/reportIssue.ts";
 
 const PAGES = [
   { key: "rules", label: "Core Rules", component: CoreRules },
@@ -55,6 +56,13 @@ export function DMScreenApp({ onHome }: { onHome: () => void }) {
             </button>
           ))}
         </div>
+        <button
+          className="btn"
+          onClick={() => openDMScreenReportIssue(PAGES[activeIdx].label)}
+          title="Report a bug on GitHub — opens a pre-filled issue with your browser info attached"
+        >
+          🐛 Report Issue
+        </button>
       </div>
       <main className="dmscreen-main">
         <ActivePage />
